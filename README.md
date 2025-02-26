@@ -21,7 +21,7 @@ An intelligent system for automated chest X-ray analysis and medical report gene
 
 ## Installation
 1. Clone the repository
-   git clone https://github.com/YOUR_USERNAME/chest-xray-ai-analyzer.git
+   git clone https://github.com/ShrishailMN/chest-xray-ai-analyzer.git
    cd chest-xray-ai-analyzer
 
 2. Install dependencies
