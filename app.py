@@ -502,41 +502,59 @@ def translate_report(report_text, language='en'):
 @app.route('/generate_report', methods=['POST'])
 def generate_report_endpoint():
     try:
-        if 'image' not in request.files:
-            return jsonify({'error': 'No image uploaded', 'message': 'Please select an image file'}), 400
+        # Check if file exists in request
+        if 'file' not in request.files and 'image' not in request.files:
+            return jsonify({
+                'error': 'No file uploaded',
+                'message': 'Please select an image file'
+            }), 400
         
-        image = request.files['image']
+        # Try both 'file' and 'image' keys
+        image = request.files.get('file') or request.files.get('image')
         if image.filename == '':
-            return jsonify({'error': 'No image selected', 'message': 'Please select an image file'}), 400
+            return jsonify({
+                'error': 'No file selected',
+                'message': 'Please select an image file'
+            }), 400
         
-        # Create directories if they don't exist
+        # Ensure directories exist
         os.makedirs('static/uploads', exist_ok=True)
         os.makedirs('static/reports', exist_ok=True)
         os.makedirs('static/heatmaps', exist_ok=True)
         
-        # Initialize database
-        init_db()
-        
+        # Get patient info with default values
         patient_info = {
             'name': request.form.get('patientName', 'Unknown'),
-            'id': request.form.get('patientId', 'Unknown'),
-            'age': request.form.get('patientAge', 'Unknown'),
-            'gender': request.form.get('patientGender', 'Unknown'),
+            'id': request.form.get('patientId', str(datetime.now().timestamp())),
+            'age': request.form.get('patientAge', 'N/A'),
+            'gender': request.form.get('patientGender', 'N/A'),
             'date': request.form.get('examDate', datetime.now().strftime('%Y-%m-%d'))
         }
         
+        # Save image with timestamp
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        image_path = f'static/uploads/image_{timestamp}.jpg'
+        image_path = os.path.join('static/uploads', f'image_{timestamp}.jpg')
         image.save(image_path)
         
-        image_tensor = process_image(image_path)
-        if image_tensor is None:
+        # Process image
+        try:
+            image_tensor = process_image(image_path)
+            if image_tensor is None:
+                raise Exception("Failed to process image")
+        except Exception as e:
             return jsonify({
                 'error': 'Image processing failed',
-                'message': 'Failed to process the uploaded image'
+                'message': str(e)
             }), 500
         
-        report_text, confidence, condition = analyze_image(image_tensor)
+        # Analyze image
+        try:
+            report_text, confidence, condition = analyze_image(image_tensor)
+        except Exception as e:
+            return jsonify({
+                'error': 'Analysis failed',
+                'message': str(e)
+            }), 500
         
         # Generate PDF
         try:
@@ -545,41 +563,38 @@ def generate_report_endpoint():
                 patient_info['age'],
                 patient_info['gender'],
                 report_text,
-                "",
+                "Follow standard medical advice",
                 image_path
             )
-        except Exception as pdf_error:
-            print(f"PDF generation error: {str(pdf_error)}")
+        except Exception as e:
             return jsonify({
                 'error': 'PDF generation failed',
-                'message': str(pdf_error)
+                'message': str(e)
             }), 500
         
         # Save to database
         try:
+            init_db()  # Ensure database exists
             save_report_to_db(patient_info, condition, confidence, report_text, image_path, pdf_path)
-        except sqlite3.Error as db_error:
-            print(f"Database error: {str(db_error)}")
-            return jsonify({
-                'error': 'Database error',
-                'message': 'Failed to save report to database'
-            }), 500
+        except Exception as e:
+            print(f"Database error: {str(e)}")
+            # Continue even if database save fails
         
+        # Return success response
         return jsonify({
             'success': True,
             'report': report_text,
             'condition': condition,
             'confidence': f"{confidence:.1%}",
-            'image_url': image_path,
-            'pdf_url': pdf_path
+            'image_url': '/' + image_path,
+            'pdf_url': '/' + pdf_path
         })
         
     except Exception as e:
-        print(f"Error generating report: {str(e)}")
+        print(f"Error in generate_report: {str(e)}")
         return jsonify({
             'error': 'Report generation failed',
-            'message': str(e),
-            'details': 'An unexpected error occurred while processing your request'
+            'message': str(e)
         }), 500
 
 @app.route('/download_report/<timestamp>')
