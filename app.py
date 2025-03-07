@@ -8,7 +8,11 @@ from PIL import Image, ImageOps
 import torchvision.transforms as transforms
 from datetime import datetime
 import random
-from fpdf import FPDF
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import letter
+from reportlab.lib import colors
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 import sqlite3
 import numpy as np
 import json
@@ -305,58 +309,55 @@ def process_image(image_path):
         print(f"Error processing image: {str(e)}")
         return None
 
-def generate_pdf_report(report_text, image_path, condition, confidence, patient_info):
+def generate_pdf_report(patient_name, age, gender, findings, recommendations):
+    # Create a temporary file for the PDF
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    pdf_path = f'static/reports/report_{timestamp}.pdf'
-    os.makedirs('static/reports', exist_ok=True)
+    pdf_path = f"static/reports/report_{timestamp}.pdf"
     
-    # Create PDF
-    pdf = FPDF()
-    pdf.add_page()
+    # Create the PDF document
+    doc = SimpleDocTemplate(pdf_path, pagesize=letter)
+    styles = getSampleStyleSheet()
+    
+    # Create custom styles
+    title_style = ParagraphStyle(
+        'CustomTitle',
+        parent=styles['Heading1'],
+        fontSize=24,
+        spaceAfter=30
+    )
+    
+    heading_style = ParagraphStyle(
+        'CustomHeading',
+        parent=styles['Heading2'],
+        fontSize=16,
+        spaceAfter=12
+    )
+    
+    # Create the content
+    content = []
     
     # Add title
-    pdf.set_font('Arial', 'B', 16)
-    pdf.cell(0, 10, 'Chest X-Ray Report', 0, 1, 'C')
+    content.append(Paragraph("Medical Report", title_style))
     
     # Add patient information
-    pdf.set_font('Arial', 'B', 12)
-    pdf.cell(0, 10, 'Patient Information:', 0, 1, 'L')
-    pdf.set_font('Arial', '', 10)
-    pdf.cell(0, 10, f"Name: {patient_info['name']}", 0, 1, 'L')
-    pdf.cell(0, 10, f"ID: {patient_info['id']}", 0, 1, 'L')
-    pdf.cell(0, 10, f"Age: {patient_info['age']}", 0, 1, 'L')
-    pdf.cell(0, 10, f"Gender: {patient_info['gender']}", 0, 1, 'L')
-    pdf.cell(0, 10, f"Exam Date: {patient_info['date']}", 0, 1, 'L')
-    
-    # Add image
-    try:
-        pdf.image(image_path, x=30, w=150)
-    except Exception as e:
-        print(f"Error adding image to PDF: {str(e)}")
+    content.append(Paragraph("Patient Information", heading_style))
+    content.append(Paragraph(f"Name: {patient_name}", styles['Normal']))
+    content.append(Paragraph(f"Age: {age}", styles['Normal']))
+    content.append(Paragraph(f"Gender: {gender}", styles['Normal']))
+    content.append(Spacer(1, 20))
     
     # Add findings
-    pdf.add_page()
-    pdf.set_font('Arial', 'B', 12)
-    pdf.cell(0, 10, 'Findings:', 0, 1, 'L')
+    content.append(Paragraph("Findings", heading_style))
+    content.append(Paragraph(findings, styles['Normal']))
+    content.append(Spacer(1, 20))
     
-    # Add report text
-    pdf.set_font('Arial', '', 10)
-    pdf.multi_cell(0, 10, report_text)
+    # Add recommendations
+    content.append(Paragraph("Recommendations", heading_style))
+    content.append(Paragraph(recommendations, styles['Normal']))
     
-    # Add condition and confidence
-    pdf.ln(10)
-    pdf.set_font('Arial', 'B', 10)
-    pdf.cell(0, 10, f'Primary Condition: {condition}', 0, 1, 'L')
-    pdf.cell(0, 10, f'Confidence Level: {confidence:.1%}', 0, 1, 'L')
+    # Build the PDF
+    doc.build(content)
     
-    # Add footer
-    pdf.set_y(-30)
-    pdf.set_font('Arial', 'I', 8)
-    pdf.set_text_color(128)
-    pdf.multi_cell(0, 10, 'This report was generated automatically and should be reviewed by a qualified healthcare professional.')
-    
-    # Save PDF
-    pdf.output(pdf_path)
     return pdf_path
 
 # Modify the init_db function
@@ -472,7 +473,7 @@ def generate_report_endpoint():
         if language != 'en':
             report_text = translate_report(report_text, language)
         
-        pdf_path = generate_pdf_report(report_text, image_path, condition, confidence, patient_info)
+        pdf_path = generate_pdf_report(patient_info['name'], patient_info['age'], patient_info['gender'], report_text, "")
         
         # Save to database
         save_report_to_db(patient_info, condition, confidence, report_text, image_path, pdf_path)
@@ -647,13 +648,13 @@ def get_analytics_data():
     }
     
     try:
-        # Get total scans and condition distribution
-        c.execute('''
-            SELECT 
+    # Get total scans and condition distribution
+    c.execute('''
+        SELECT 
                 LOWER(condition) as condition,
-                COUNT(*) as count,
-                AVG(confidence) as avg_confidence
-            FROM reports 
+            COUNT(*) as count,
+            AVG(confidence) as avg_confidence
+        FROM reports 
             GROUP BY LOWER(condition)
         ''')
         
@@ -668,28 +669,28 @@ def get_analytics_data():
                     'percentage': round((count / stats['total_scans']) * 100, 1) if stats['total_scans'] > 0 else 0,
                     'avg_confidence': round(avg_confidence * 100, 1) if avg_confidence else 0
                 }
-        
-        # Get age group distribution
-        c.execute('''
-            SELECT 
-                CASE 
+    
+    # Get age group distribution
+    c.execute('''
+        SELECT 
+            CASE 
                     WHEN CAST(age AS INTEGER) < 18 THEN 'Under 18'
                     WHEN CAST(age AS INTEGER) BETWEEN 18 AND 30 THEN '18-30'
                     WHEN CAST(age AS INTEGER) BETWEEN 31 AND 50 THEN '31-50'
                     WHEN CAST(age AS INTEGER) BETWEEN 51 AND 70 THEN '51-70'
-                    ELSE 'Over 70'
-                END as age_group,
-                COUNT(*) as count
-            FROM reports 
+                ELSE 'Over 70'
+            END as age_group,
+            COUNT(*) as count
+        FROM reports 
             WHERE age IS NOT NULL AND age != ''
-            GROUP BY age_group
+        GROUP BY age_group
             ORDER BY age_group
-        ''')
-        for row in c.fetchall():
+    ''')
+    for row in c.fetchall():
             if row[0]:
-                stats['age_groups'][row[0]] = row[1]
-        
-        # Get gender distribution
+        stats['age_groups'][row[0]] = row[1]
+    
+    # Get gender distribution
         c.execute('''
             SELECT 
                 COALESCE(UPPER(gender), 'O') as gender,
@@ -697,31 +698,31 @@ def get_analytics_data():
             FROM reports 
             GROUP BY UPPER(gender)
         ''')
-        for row in c.fetchall():
+    for row in c.fetchall():
             gender = row[0] if row[0] in ['M', 'F', 'O'] else 'O'
             stats['gender_distribution'][gender] = row[1]
-        
-        # Get confidence level distribution
-        c.execute('''
-            SELECT 
-                CASE 
-                    WHEN confidence >= 0.8 THEN 'high'
-                    WHEN confidence >= 0.6 THEN 'medium'
-                    ELSE 'low'
-                END as confidence_level,
-                COUNT(*) as count
-            FROM reports 
-            GROUP BY confidence_level
-        ''')
-        for row in c.fetchall():
+    
+    # Get confidence level distribution
+    c.execute('''
+        SELECT 
+            CASE 
+                WHEN confidence >= 0.8 THEN 'high'
+                WHEN confidence >= 0.6 THEN 'medium'
+                ELSE 'low'
+            END as confidence_level,
+            COUNT(*) as count
+        FROM reports 
+        GROUP BY confidence_level
+    ''')
+    for row in c.fetchall():
             if row[0]:
-                stats['accuracy_metrics'][f'{row[0]}_confidence'] = row[1]
+        stats['accuracy_metrics'][f'{row[0]}_confidence'] = row[1]
     
     except Exception as e:
         print(f"Error getting analytics data: {str(e)}")
     
     finally:
-        conn.close()
+    conn.close()
     
     return stats
 
