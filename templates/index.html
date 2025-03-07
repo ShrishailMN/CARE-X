@@ -28,7 +28,8 @@
         
         <div class="text-center mb-4">
             <a href="/" class="btn btn-outline-primary me-2">Home</a>
-            <a href="/view_reports" class="btn btn-outline-secondary">View Reports History</a>
+            <a href="/view_reports" class="btn btn-outline-secondary me-2">View Reports History</a>
+            <a href="/analytics" class="btn btn-outline-info">View Analytics</a>
         </div>
         
         <div class="row justify-content-center mb-4">
@@ -99,6 +100,42 @@
                                 </button>
                             </div>
                         </div>
+                        
+                        <div id="advancedFeatures" style="display:none;">
+                            <div class="row justify-content-center mt-4">
+                                <div class="col-md-8">
+                                    <div class="card">
+                                        <div class="card-body">
+                                            <h5 class="card-title">Advanced Analysis</h5>
+                                            
+                                            <!-- Confidence Metrics -->
+                                            <div class="mb-4">
+                                                <h6>Confidence Metrics</h6>
+                                                <div id="confidenceMetrics" class="p-3 bg-light rounded"></div>
+                                            </div>
+                                            
+                                            <!-- Treatment Guidelines -->
+                                            <div class="mb-4">
+                                                <h6>Treatment Guidelines</h6>
+                                                <div id="treatmentGuidelines" class="p-3 bg-light rounded"></div>
+                                            </div>
+                                            
+                                            <!-- Follow-up Schedule -->
+                                            <div class="mb-4">
+                                                <h6>Follow-up Schedule</h6>
+                                                <div id="followupSchedule" class="p-3 bg-light rounded"></div>
+                                            </div>
+                                            
+                                            <!-- Patient History -->
+                                            <div class="mb-4">
+                                                <h6>Patient History Analysis</h6>
+                                                <div id="patientHistory" class="p-3 bg-light rounded"></div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -131,7 +168,7 @@
             const imageFile = document.getElementById('imageInput').files[0];
             formData.append('image', imageFile);
             
-            // Add patient information to formData
+            // Add patient information
             formData.append('patientName', document.getElementById('patientName').value);
             formData.append('patientId', document.getElementById('patientId').value);
             formData.append('patientAge', document.getElementById('patientAge').value);
@@ -140,6 +177,7 @@
             
             document.querySelector('.loading').style.display = 'block';
             document.getElementById('reportSection').style.display = 'none';
+            document.getElementById('advancedFeatures').style.display = 'none';
             
             try {
                 const response = await fetch('/generate_report', {
@@ -150,9 +188,29 @@
                 const data = await response.json();
                 
                 if (data.success) {
+                    // Display basic report
                     document.getElementById('reportText').textContent = data.report;
                     document.getElementById('reportSection').style.display = 'block';
                     currentTimestamp = data.pdf_url.split('report_')[1].split('.pdf')[0];
+                    
+                    // Display advanced features if they exist
+                    if (data.metrics || data.guidelines || data.followup || data.history) {
+                        document.getElementById('advancedFeatures').style.display = 'block';
+                        
+                        // Update confidence metrics
+                        document.getElementById('confidenceMetrics').innerHTML = formatMetrics(data.metrics);
+                        
+                        // Update treatment guidelines
+                        document.getElementById('treatmentGuidelines').innerHTML = formatGuidelines(data.guidelines);
+                        
+                        // Update follow-up schedule
+                        document.getElementById('followupSchedule').innerHTML = formatSchedule(data.followup);
+                        
+                        // Update patient history
+                        if (data.history) {
+                            document.getElementById('patientHistory').innerHTML = formatHistory(data.history);
+                        }
+                    }
                 } else {
                     alert(data.error || 'Error generating report');
                 }
@@ -164,10 +222,47 @@
         });
 
         document.getElementById('downloadPdf').addEventListener('click', function() {
-            if (currentTimestamp) {
-                window.location.href = `/download_report/${currentTimestamp}`;
+            if (!currentTimestamp) {
+                // If currentTimestamp is not set, the report hasn't been generated yet
+                return;
             }
+            window.location.href = `/download_report/${currentTimestamp}`;
         });
+
+        function formatMetrics(metrics) {
+            if (!metrics) return 'No metrics available';
+            return `
+                <p><strong>Overall Confidence:</strong> ${metrics.Overall_Confidence}</p>
+                <p><strong>Reliability Score:</strong> ${metrics.Reliability_Score}</p>
+                <p><strong>Second Opinion:</strong> ${metrics.Second_Opinion}</p>
+            `;
+        }
+
+        function formatGuidelines(guidelines) {
+            if (!guidelines) return 'No guidelines available';
+            return `
+                <p><strong>Care Level:</strong> ${guidelines.care_level || 'Not specified'}</p>
+                <p><strong>Treatment:</strong> ${guidelines.treatment || 'Not specified'}</p>
+                <p><strong>Monitoring:</strong> ${guidelines.monitoring || 'Not specified'}</p>
+            `;
+        }
+
+        function formatSchedule(schedule) {
+            if (!schedule) return 'No schedule available';
+            return `
+                <p><strong>Next Follow-up:</strong> ${schedule.interval}</p>
+                <p><strong>Recommended Type:</strong> ${schedule.type}</p>
+            `;
+        }
+
+        function formatHistory(history) {
+            if (!history) return 'No history available';
+            return `
+                <p><strong>Condition Progression:</strong> ${history.condition_progression}</p>
+                <p><strong>Confidence Trend:</strong> ${history.confidence_trend}</p>
+                <p><strong>Recommendation:</strong> ${history.recommendation}</p>
+            `;
+        }
     </script>
 </body>
 </html> 

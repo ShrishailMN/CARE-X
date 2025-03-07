@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>X-Ray Analysis Analytics</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="container mt-5">
+        <h1 class="text-center mb-4">Analysis Dashboard</h1>
+        
+        <!-- Navigation -->
+        <div class="text-center mb-4">
+            <a href="/" class="btn btn-outline-primary me-2">Home</a>
+            <a href="/view_reports" class="btn btn-outline-secondary">View Reports</a>
+        </div>
+
+        <!-- Stats Cards -->
+        <div class="row mb-4">
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-body text-center">
+                        <h5 class="card-title">Total Scans</h5>
+                        <h2 class="card-text">{{ stats.total_scans }}</h2>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-body text-center">
+                        <h5 class="card-title">Normal Cases</h5>
+                        <h2 class="card-text">{{ stats.conditions.normal.count }}</h2>
+                        <p class="text-muted">
+                            {{ stats.conditions.normal.percentage }}% of total<br>
+                            Avg. Confidence: {{ stats.conditions.normal.avg_confidence }}%
+                        </p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-body text-center">
+                        <h5 class="card-title">Pneumonia Cases</h5>
+                        <h2 class="card-text">{{ stats.conditions.pneumonia.count }}</h2>
+                        <p class="text-muted">
+                            {{ stats.conditions.pneumonia.percentage }}% of total<br>
+                            Avg. Confidence: {{ stats.conditions.pneumonia.avg_confidence }}%
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Charts -->
+        <div class="row">
+            <div class="col-md-6 mb-4">
+                <div class="card">
+                    <div class="card-body">
+                        <h5 class="card-title">Gender Distribution</h5>
+                        <canvas id="genderChart"></canvas>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6 mb-4">
+                <div class="card">
+                    <div class="card-body">
+                        <h5 class="card-title">Age Distribution</h5>
+                        <canvas id="ageChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Gender Distribution Chart
+            const genderChart = new Chart(document.getElementById('genderChart'), {
+                type: 'pie',
+                data: {
+                    labels: ['Male', 'Female', 'Other'],
+                    datasets: [{
+                        data: [
+                            Number({{ stats.gender_distribution.M }}),
+                            Number({{ stats.gender_distribution.F }}),
+                            Number({{ stats.gender_distribution.O }})
+                        ],
+                        backgroundColor: ['#36A2EB', '#FF6384', '#FFCE56']
+                    }]
+                }
+            });
+
+            // Age Distribution Chart
+            const ageChart = new Chart(document.getElementById('ageChart'), {
+                type: 'bar',
+                data: {
+                    labels: {{ stats.age_groups.keys()|list|tojson|safe }},
+                    datasets: [{
+                        label: 'Number of Patients',
+                        data: {{ stats.age_groups.values()|list|tojson|safe }},
+                        backgroundColor: '#36A2EB'
+                    }]
+                },
+                options: {
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                stepSize: 1
+                            }
+                        }
+                    }
+                }
+            });
+        });
+    </script>
+</body>
+</html> 
