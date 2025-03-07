@@ -16,13 +16,22 @@ import json
 app = Flask(__name__)
 
 
-@app.errorhandler(500)
-def internal_error(error):
-    return jsonify({"error": "Internal Server Error", "message": str(error)}), 500
-
 @app.errorhandler(404)
 def not_found_error(error):
-    return jsonify({"error": "Not Found", "message": "The requested resource was not found"}), 404
+    return jsonify({'error': 'Not Found', 'message': 'The requested resource was not found'}), 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    return jsonify({'error': 'Internal Server Error', 'message': str(error)}), 500
+
+@app.errorhandler(Exception)
+def handle_exception(error):
+    print(f"Unhandled exception: {str(error)}")
+    return jsonify({
+        'error': 'Internal Server Error',
+        'message': 'An unexpected error occurred',
+        'details': str(error)
+    }), 500
     
 # Add this line for Render
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
@@ -404,23 +413,28 @@ def generate_pdf_report(patient_name, age, gender, findings, recommendations, im
 
 # Modify the init_db function
 def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS reports
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  patient_name TEXT,
-                  patient_id TEXT,
-                  age TEXT,
-                  gender TEXT,
-                  exam_date TEXT,
-                  condition TEXT,
-                  confidence REAL,
-                  report_text TEXT,
-                  image_path TEXT,
-                  pdf_path TEXT,
-                  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
-    conn.commit()
-    conn.close()
+    try:
+        os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute('''CREATE TABLE IF NOT EXISTS reports
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      patient_name TEXT,
+                      patient_id TEXT,
+                      age TEXT,
+                      gender TEXT,
+                      exam_date TEXT,
+                      condition TEXT,
+                      confidence REAL,
+                      report_text TEXT,
+                      image_path TEXT,
+                      pdf_path TEXT,
+                      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"Database initialization error: {str(e)}")
+        raise
 
 # Modify save_report_to_db function
 def save_report_to_db(patient_info, condition, confidence, report_text, image_path, pdf_path):
@@ -487,25 +501,28 @@ def translate_report(report_text, language='en'):
 
 @app.route('/generate_report', methods=['POST'])
 def generate_report_endpoint():
-    if 'image' not in request.files:
-        return jsonify({'error': 'No image uploaded'}), 400
-    
-    image = request.files['image']
-    if image.filename == '':
-        return jsonify({'error': 'No image selected'}), 400
-    
     try:
-        # Ensure directories exist
+        if 'image' not in request.files:
+            return jsonify({'error': 'No image uploaded', 'message': 'Please select an image file'}), 400
+        
+        image = request.files['image']
+        if image.filename == '':
+            return jsonify({'error': 'No image selected', 'message': 'Please select an image file'}), 400
+        
+        # Create directories if they don't exist
         os.makedirs('static/uploads', exist_ok=True)
         os.makedirs('static/reports', exist_ok=True)
         os.makedirs('static/heatmaps', exist_ok=True)
         
+        # Initialize database
+        init_db()
+        
         patient_info = {
-            'name': request.form.get('patientName', ''),
-            'id': request.form.get('patientId', ''),
-            'age': request.form.get('patientAge', ''),
-            'gender': request.form.get('patientGender', ''),
-            'date': request.form.get('examDate', '')
+            'name': request.form.get('patientName', 'Unknown'),
+            'id': request.form.get('patientId', 'Unknown'),
+            'age': request.form.get('patientAge', 'Unknown'),
+            'gender': request.form.get('patientGender', 'Unknown'),
+            'date': request.form.get('examDate', datetime.now().strftime('%Y-%m-%d'))
         }
         
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -514,22 +531,39 @@ def generate_report_endpoint():
         
         image_tensor = process_image(image_path)
         if image_tensor is None:
-            return jsonify({'error': 'Failed to process image'}), 500
-            
+            return jsonify({
+                'error': 'Image processing failed',
+                'message': 'Failed to process the uploaded image'
+            }), 500
+        
         report_text, confidence, condition = analyze_image(image_tensor)
         
-        # Generate PDF with image and recommendations
-        pdf_path = generate_pdf_report(
-            patient_info['name'], 
-            patient_info['age'], 
-            patient_info['gender'], 
-            report_text, 
-            "",
-            image_path
-        )
+        # Generate PDF
+        try:
+            pdf_path = generate_pdf_report(
+                patient_info['name'],
+                patient_info['age'],
+                patient_info['gender'],
+                report_text,
+                "",
+                image_path
+            )
+        except Exception as pdf_error:
+            print(f"PDF generation error: {str(pdf_error)}")
+            return jsonify({
+                'error': 'PDF generation failed',
+                'message': str(pdf_error)
+            }), 500
         
         # Save to database
-        save_report_to_db(patient_info, condition, confidence, report_text, image_path, pdf_path)
+        try:
+            save_report_to_db(patient_info, condition, confidence, report_text, image_path, pdf_path)
+        except sqlite3.Error as db_error:
+            print(f"Database error: {str(db_error)}")
+            return jsonify({
+                'error': 'Database error',
+                'message': 'Failed to save report to database'
+            }), 500
         
         return jsonify({
             'success': True,
@@ -543,11 +577,10 @@ def generate_report_endpoint():
     except Exception as e:
         print(f"Error generating report: {str(e)}")
         return jsonify({
-            'error': 'Failed to generate report',
+            'error': 'Report generation failed',
             'message': str(e),
-            'details': 'Please ensure all required fields are provided and the image is valid'
+            'details': 'An unexpected error occurred while processing your request'
         }), 500
-
 
 @app.route('/download_report/<timestamp>')
 def download_report(timestamp):
@@ -559,14 +592,40 @@ def download_report(timestamp):
 
 @app.route('/view_reports')
 def view_reports():
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute('''SELECT id, patient_name, patient_id, condition, exam_date, 
-                 confidence, image_path, pdf_path, created_at 
-                 FROM reports ORDER BY created_at DESC''')
-    reports = c.fetchall()
-    conn.close()
-    return render_template('reports.html', reports=reports)
+    try:
+        # Ensure the database exists
+        init_db()
+        
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute('''SELECT id, patient_name, patient_id, condition, exam_date, 
+                     confidence, image_path, pdf_path, created_at 
+                     FROM reports ORDER BY created_at DESC''')
+        reports = c.fetchall()
+        conn.close()
+        
+        # Convert reports to a list of dictionaries for better template handling
+        formatted_reports = []
+        for report in reports:
+            formatted_reports.append({
+                'id': report[0],
+                'patient_name': report[1],
+                'patient_id': report[2],
+                'condition': report[3],
+                'exam_date': report[4],
+                'confidence': report[5],
+                'image_path': report[6],
+                'pdf_path': report[7],
+                'created_at': report[8]
+            })
+        
+        return render_template('reports.html', reports=formatted_reports)
+    except sqlite3.Error as e:
+        print(f"Database error: {str(e)}")
+        return jsonify({'error': 'Database error', 'message': str(e)}), 500
+    except Exception as e:
+        print(f"Error in view_reports: {str(e)}")
+        return jsonify({'error': 'Internal server error', 'message': str(e)}), 500
 
 def generate_heatmap(image_tensor, model):
     # Get activation maps
