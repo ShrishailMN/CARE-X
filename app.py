@@ -15,6 +15,15 @@ import json
 
 app = Flask(__name__)
 
+
+@app.errorhandler(500)
+def internal_error(error):
+    return jsonify({"error": "Internal Server Error", "message": str(error)}), 500
+
+@app.errorhandler(404)
+def not_found_error(error):
+    return jsonify({"error": "Not Found", "message": "The requested resource was not found"}), 404
+    
 # Add this line for Render
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 
@@ -486,6 +495,11 @@ def generate_report_endpoint():
         return jsonify({'error': 'No image selected'}), 400
     
     try:
+        # Ensure directories exist
+        os.makedirs('static/uploads', exist_ok=True)
+        os.makedirs('static/reports', exist_ok=True)
+        os.makedirs('static/heatmaps', exist_ok=True)
+        
         patient_info = {
             'name': request.form.get('patientName', ''),
             'id': request.form.get('patientId', ''),
@@ -496,15 +510,13 @@ def generate_report_endpoint():
         
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         image_path = f'static/uploads/image_{timestamp}.jpg'
-        os.makedirs('static/uploads', exist_ok=True)
         image.save(image_path)
         
         image_tensor = process_image(image_path)
+        if image_tensor is None:
+            return jsonify({'error': 'Failed to process image'}), 500
+            
         report_text, confidence, condition = analyze_image(image_tensor)
-        
-        language = request.form.get('language', 'en')
-        if language != 'en':
-            report_text = translate_report(report_text, language)
         
         # Generate PDF with image and recommendations
         pdf_path = generate_pdf_report(
@@ -512,8 +524,8 @@ def generate_report_endpoint():
             patient_info['age'], 
             patient_info['gender'], 
             report_text, 
-            "",  # recommendations will be generated inside the function
-            image_path  # pass the image path
+            "",
+            image_path
         )
         
         # Save to database
@@ -530,7 +542,12 @@ def generate_report_endpoint():
         
     except Exception as e:
         print(f"Error generating report: {str(e)}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({
+            'error': 'Failed to generate report',
+            'message': str(e),
+            'details': 'Please ensure all required fields are provided and the image is valid'
+        }), 500
+
 
 @app.route('/download_report/<timestamp>')
 def download_report(timestamp):
@@ -1027,14 +1044,17 @@ def get_heatmap(image_id):
 
 # Modify the main section
 if __name__ == '__main__':
-    # Create necessary directories
-    os.makedirs('static/uploads', exist_ok=True)
-    os.makedirs('static/reports', exist_ok=True)
-    os.makedirs('static/heatmaps', exist_ok=True)
-    
-    # Initialize database
-    init_db()
-    
-    # Get port from environment variable or use default
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False) 
+    try:
+        # Create necessary directories
+        os.makedirs('static/uploads', exist_ok=True)
+        os.makedirs('static/reports', exist_ok=True)
+        os.makedirs('static/heatmaps', exist_ok=True)
+        
+        # Initialize database
+        init_db()
+        
+        # Get port from environment variable or use default
+        port = int(os.environ.get('PORT', 10000))
+        app.run(host='0.0.0.0', port=port, debug=False)
+    except Exception as e:
+        print(f"Startup error: {str(e)}")
