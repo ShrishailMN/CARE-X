@@ -32,108 +32,67 @@
             <a href="/analytics" class="btn btn-outline-info">View Analytics</a>
         </div>
         
-        <div class="row justify-content-center mb-4">
-            <div class="col-md-8">
-                <div class="card">
-                    <div class="card-body">
-                        <h5 class="card-title">Patient Information</h5>
-                        <div class="row">
-                            <div class="col-md-6 mb-3">
-                                <label class="form-label">Patient Name</label>
-                                <input type="text" class="form-control" id="patientName" required>
-                            </div>
-                            <div class="col-md-6 mb-3">
-                                <label class="form-label">Patient ID</label>
-                                <input type="text" class="form-control" id="patientId" required>
-                            </div>
-                        </div>
-                        <div class="row">
-                            <div class="col-md-4 mb-3">
-                                <label class="form-label">Age</label>
-                                <input type="number" class="form-control" id="patientAge" required>
-                            </div>
-                            <div class="col-md-4 mb-3">
-                                <label class="form-label">Gender</label>
-                                <select class="form-control" id="patientGender" required>
-                                    <option value="">Select</option>
-                                    <option value="M">Male</option>
-                                    <option value="F">Female</option>
-                                    <option value="O">Other</option>
-                                </select>
-                            </div>
-                            <div class="col-md-4 mb-3">
-                                <label class="form-label">Date</label>
-                                <input type="date" class="form-control" id="examDate" required>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-        
         <div class="row justify-content-center">
             <div class="col-md-8">
                 <div class="card">
                     <div class="card-body">
-                        <form id="uploadForm" class="mb-4">
+                        <form id="uploadForm" enctype="multipart/form-data" method="POST">
+                            <!-- Patient Information Section -->
+                            <h5 class="card-title mb-4">Patient Information</h5>
+                            <div class="row">
+                                <div class="col-md-6 mb-3">
+                                    <label class="form-label">Patient Name</label>
+                                    <input type="text" class="form-control" name="patientName" required>
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <label class="form-label">Patient ID</label>
+                                    <input type="text" class="form-control" name="patientId" required>
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-md-4 mb-3">
+                                    <label class="form-label">Age</label>
+                                    <input type="number" class="form-control" name="patientAge" required>
+                                </div>
+                                <div class="col-md-4 mb-3">
+                                    <label class="form-label">Gender</label>
+                                    <select class="form-control" name="patientGender" required>
+                                        <option value="">Select</option>
+                                        <option value="M">Male</option>
+                                        <option value="F">Female</option>
+                                        <option value="O">Other</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-4 mb-3">
+                                    <label class="form-label">Date</label>
+                                    <input type="date" class="form-control" name="examDate" required>
+                                </div>
+                            </div>
+
+                            <!-- Image Upload Section -->
                             <div class="mb-3">
-                                <label for="imageInput" class="form-label">Upload Medical Image</label>
-                                <input type="file" class="form-control" id="imageInput" accept="image/*" required>
+                                <label class="form-label">Upload Medical Image</label>
+                                <input type="file" class="form-control" name="file" accept="image/*" required>
                             </div>
                             <div id="imagePreview" class="text-center"></div>
+                            
                             <button type="submit" class="btn btn-primary w-100">Generate Report</button>
                         </form>
                         
-                        <div class="loading text-center">
+                        <div class="loading text-center mt-3">
                             <div class="spinner-border text-primary" role="status">
                                 <span class="visually-hidden">Loading...</span>
                             </div>
                             <p>Generating report...</p>
                         </div>
                         
-                        <div id="reportSection">
+                        <div id="reportSection" class="mt-4">
                             <h4 class="mb-3">Generated Report</h4>
                             <div id="reportText" class="p-3 bg-light rounded mb-3"></div>
                             <div class="d-grid gap-2">
                                 <button id="downloadPdf" class="btn btn-success download-btn">
                                     Download PDF Report
                                 </button>
-                            </div>
-                        </div>
-                        
-                        <div id="advancedFeatures" style="display:none;">
-                            <div class="row justify-content-center mt-4">
-                                <div class="col-md-8">
-                                    <div class="card">
-                                        <div class="card-body">
-                                            <h5 class="card-title">Advanced Analysis</h5>
-                                            
-                                            <!-- Confidence Metrics -->
-                                            <div class="mb-4">
-                                                <h6>Confidence Metrics</h6>
-                                                <div id="confidenceMetrics" class="p-3 bg-light rounded"></div>
-                                            </div>
-                                            
-                                            <!-- Treatment Guidelines -->
-                                            <div class="mb-4">
-                                                <h6>Treatment Guidelines</h6>
-                                                <div id="treatmentGuidelines" class="p-3 bg-light rounded"></div>
-                                            </div>
-                                            
-                                            <!-- Follow-up Schedule -->
-                                            <div class="mb-4">
-                                                <h6>Follow-up Schedule</h6>
-                                                <div id="followupSchedule" class="p-3 bg-light rounded"></div>
-                                            </div>
-                                            
-                                            <!-- Patient History -->
-                                            <div class="mb-4">
-                                                <h6>Patient History Analysis</h6>
-                                                <div id="patientHistory" class="p-3 bg-light rounded"></div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
                             </div>
                         </div>
                     </div>
@@ -143,7 +102,8 @@
     </div>
 
     <script>
-        document.getElementById('imageInput').addEventListener('change', function(e) {
+        // Preview image before upload
+        document.querySelector('input[type="file"]').addEventListener('change', function(e) {
             const file = e.target.files[0];
             if (file) {
                 const reader = new FileReader();
@@ -159,25 +119,19 @@
             }
         });
 
-        let currentTimestamp = '';
-
+        // Handle form submission
         document.getElementById('uploadForm').addEventListener('submit', async function(e) {
             e.preventDefault();
             
-            const formData = new FormData();
-            const imageFile = document.getElementById('imageInput').files[0];
-            formData.append('image', imageFile);
+            const formData = new FormData(this);
+            const submitButton = this.querySelector('button[type="submit"]');
+            const loadingDiv = document.querySelector('.loading');
+            const reportSection = document.getElementById('reportSection');
             
-            // Add patient information
-            formData.append('patientName', document.getElementById('patientName').value);
-            formData.append('patientId', document.getElementById('patientId').value);
-            formData.append('patientAge', document.getElementById('patientAge').value);
-            formData.append('patientGender', document.getElementById('patientGender').value);
-            formData.append('examDate', document.getElementById('examDate').value);
-            
-            document.querySelector('.loading').style.display = 'block';
-            document.getElementById('reportSection').style.display = 'none';
-            document.getElementById('advancedFeatures').style.display = 'none';
+            // Disable submit button and show loading
+            submitButton.disabled = true;
+            loadingDiv.style.display = 'block';
+            reportSection.style.display = 'none';
             
             try {
                 const response = await fetch('/generate_report', {
@@ -185,84 +139,34 @@
                     body: formData
                 });
                 
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
                 const data = await response.json();
                 
-                if (data.success) {
-                    // Display basic report
-                    document.getElementById('reportText').textContent = data.report;
-                    document.getElementById('reportSection').style.display = 'block';
-                    currentTimestamp = data.pdf_url.split('report_')[1].split('.pdf')[0];
-                    
-                    // Display advanced features if they exist
-                    if (data.metrics || data.guidelines || data.followup || data.history) {
-                        document.getElementById('advancedFeatures').style.display = 'block';
-                        
-                        // Update confidence metrics
-                        document.getElementById('confidenceMetrics').innerHTML = formatMetrics(data.metrics);
-                        
-                        // Update treatment guidelines
-                        document.getElementById('treatmentGuidelines').innerHTML = formatGuidelines(data.guidelines);
-                        
-                        // Update follow-up schedule
-                        document.getElementById('followupSchedule').innerHTML = formatSchedule(data.followup);
-                        
-                        // Update patient history
-                        if (data.history) {
-                            document.getElementById('patientHistory').innerHTML = formatHistory(data.history);
-                        }
-                    }
-                } else {
-                    alert(data.error || 'Error generating report');
+                if (data.error) {
+                    throw new Error(data.message || 'Error generating report');
                 }
+                
+                // Display report
+                document.getElementById('reportText').innerHTML = data.report;
+                reportSection.style.display = 'block';
+                
+                // Store PDF URL for download
+                const pdfUrl = data.pdf_url;
+                document.getElementById('downloadPdf').onclick = function() {
+                    window.location.href = pdfUrl;
+                };
+                
             } catch (error) {
-                alert('Error: ' + error.message);
+                console.error('Error:', error);
+                alert('Error generating report: ' + error.message);
             } finally {
-                document.querySelector('.loading').style.display = 'none';
+                submitButton.disabled = false;
+                loadingDiv.style.display = 'none';
             }
         });
-
-        document.getElementById('downloadPdf').addEventListener('click', function() {
-            if (!currentTimestamp) {
-                // If currentTimestamp is not set, the report hasn't been generated yet
-                return;
-            }
-            window.location.href = `/download_report/${currentTimestamp}`;
-        });
-
-        function formatMetrics(metrics) {
-            if (!metrics) return 'No metrics available';
-            return `
-                <p><strong>Overall Confidence:</strong> ${metrics.Overall_Confidence}</p>
-                <p><strong>Reliability Score:</strong> ${metrics.Reliability_Score}</p>
-                <p><strong>Second Opinion:</strong> ${metrics.Second_Opinion}</p>
-            `;
-        }
-
-        function formatGuidelines(guidelines) {
-            if (!guidelines) return 'No guidelines available';
-            return `
-                <p><strong>Care Level:</strong> ${guidelines.care_level || 'Not specified'}</p>
-                <p><strong>Treatment:</strong> ${guidelines.treatment || 'Not specified'}</p>
-                <p><strong>Monitoring:</strong> ${guidelines.monitoring || 'Not specified'}</p>
-            `;
-        }
-
-        function formatSchedule(schedule) {
-            if (!schedule) return 'No schedule available';
-            return `
-                <p><strong>Next Follow-up:</strong> ${schedule.interval}</p>
-                <p><strong>Recommended Type:</strong> ${schedule.type}</p>
-            `;
-        }
-
-        function formatHistory(history) {
-            if (!history) return 'No history available';
-            return `
-                <p><strong>Condition Progression:</strong> ${history.condition_progression}</p>
-                <p><strong>Confidence Trend:</strong> ${history.confidence_trend}</p>
-                <p><strong>Recommendation:</strong> ${history.recommendation}</p>
-            `;
-        }
     </script>
 </body>
-</html> 
+</html>
