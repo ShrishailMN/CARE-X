@@ -8,11 +8,7 @@ from PIL import Image, ImageOps
 import torchvision.transforms as transforms
 from datetime import datetime
 import random
-from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import letter
-from reportlab.lib import colors
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from fpdf import FPDF
 import sqlite3
 import numpy as np
 import json
@@ -309,54 +305,91 @@ def process_image(image_path):
         print(f"Error processing image: {str(e)}")
         return None
 
-def generate_pdf_report(patient_name, age, gender, findings, recommendations):
+def generate_pdf_report(patient_name, age, gender, findings, recommendations, image_path=None):
     # Create a temporary file for the PDF
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     pdf_path = f"static/reports/report_{timestamp}.pdf"
     
-    # Create the PDF document
-    doc = SimpleDocTemplate(pdf_path, pagesize=letter)
-    styles = getSampleStyleSheet()
+    # Create PDF object
+    pdf = FPDF()
+    pdf.add_page()
     
-    # Create custom styles
-    title_style = ParagraphStyle(
-        'CustomTitle',
-        parent=styles['Heading1'],
-        fontSize=24,
-        spaceAfter=30
-    )
-    
-    heading_style = ParagraphStyle(
-        'CustomHeading',
-        parent=styles['Heading2'],
-        fontSize=16,
-        spaceAfter=12
-    )
-    
-    # Create the content
-    content = []
+    # Set font
+    pdf.set_font("Arial", "B", 16)
     
     # Add title
-    content.append(Paragraph("Medical Report", title_style))
+    pdf.cell(0, 10, "Medical Report", ln=True, align='C')
     
     # Add patient information
-    content.append(Paragraph("Patient Information", heading_style))
-    content.append(Paragraph(f"Name: {patient_name}", styles['Normal']))
-    content.append(Paragraph(f"Age: {age}", styles['Normal']))
-    content.append(Paragraph(f"Gender: {gender}", styles['Normal']))
-    content.append(Spacer(1, 20))
+    pdf.set_font("Arial", "B", 12)
+    pdf.cell(0, 10, "Patient Information", ln=True)
+    
+    pdf.set_font("Arial", "", 12)
+    pdf.cell(0, 10, f"Name: {patient_name}", ln=True)
+    pdf.cell(0, 10, f"Age: {age}", ln=True)
+    pdf.cell(0, 10, f"Gender: {gender}", ln=True)
+    pdf.ln(10)
+    
+    # Add X-ray image if available
+    if image_path and os.path.exists(image_path):
+        try:
+            # Add image with proper sizing
+            pdf.image(image_path, x=10, w=190)
+            pdf.ln(10)
+        except Exception as e:
+            print(f"Error adding image to PDF: {str(e)}")
     
     # Add findings
-    content.append(Paragraph("Findings", heading_style))
-    content.append(Paragraph(findings, styles['Normal']))
-    content.append(Spacer(1, 20))
+    pdf.set_font("Arial", "B", 12)
+    pdf.cell(0, 10, "Findings", ln=True)
+    
+    pdf.set_font("Arial", "", 12)
+    pdf.multi_cell(0, 10, findings)
+    pdf.ln(10)
     
     # Add recommendations
-    content.append(Paragraph("Recommendations", heading_style))
-    content.append(Paragraph(recommendations, styles['Normal']))
+    pdf.set_font("Arial", "B", 12)
+    pdf.cell(0, 10, "Recommendations", ln=True)
     
-    # Build the PDF
-    doc.build(content)
+    pdf.set_font("Arial", "", 12)
+    
+    # Generate recommendations based on findings
+    if "pneumonia" in findings.lower():
+        recommendations = [
+            "1. Follow prescribed antibiotic treatment",
+            "2. Get adequate rest and sleep",
+            "3. Stay hydrated (8-10 glasses of water daily)",
+            "4. Monitor temperature and symptoms",
+            "5. Follow up with healthcare provider as scheduled",
+            "6. Avoid smoking and second-hand smoke",
+            "7. Practice deep breathing exercises",
+            "8. Maintain good hand hygiene"
+        ]
+    else:
+        recommendations = [
+            "1. Continue regular health check-ups",
+            "2. Maintain a healthy lifestyle",
+            "3. Practice good respiratory hygiene",
+            "4. Stay up to date with vaccinations",
+            "5. Exercise regularly",
+            "6. Maintain a balanced diet",
+            "7. Get adequate sleep",
+            "8. Manage stress levels"
+        ]
+    
+    # Add recommendations to PDF
+    for rec in recommendations:
+        pdf.multi_cell(0, 10, rec)
+        pdf.ln(5)
+    
+    # Add timestamp and footer
+    pdf.set_y(-30)
+    pdf.set_font("Arial", "I", 8)
+    pdf.cell(0, 10, f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", 0, 1, 'C')
+    pdf.cell(0, 10, "This is a computer-generated report. Please consult with a healthcare provider.", 0, 1, 'C')
+    
+    # Save the PDF
+    pdf.output(pdf_path)
     
     return pdf_path
 
@@ -473,7 +506,15 @@ def generate_report_endpoint():
         if language != 'en':
             report_text = translate_report(report_text, language)
         
-        pdf_path = generate_pdf_report(patient_info['name'], patient_info['age'], patient_info['gender'], report_text, "")
+        # Generate PDF with image and recommendations
+        pdf_path = generate_pdf_report(
+            patient_info['name'], 
+            patient_info['age'], 
+            patient_info['gender'], 
+            report_text, 
+            "",  # recommendations will be generated inside the function
+            image_path  # pass the image path
+        )
         
         # Save to database
         save_report_to_db(patient_info, condition, confidence, report_text, image_path, pdf_path)
@@ -648,13 +689,13 @@ def get_analytics_data():
     }
     
     try:
-    # Get total scans and condition distribution
-    c.execute('''
-        SELECT 
+        # Get total scans and condition distribution
+        c.execute('''
+            SELECT 
                 LOWER(condition) as condition,
-            COUNT(*) as count,
-            AVG(confidence) as avg_confidence
-        FROM reports 
+                COUNT(*) as count,
+                AVG(confidence) as avg_confidence
+            FROM reports 
             GROUP BY LOWER(condition)
         ''')
         
@@ -669,28 +710,29 @@ def get_analytics_data():
                     'percentage': round((count / stats['total_scans']) * 100, 1) if stats['total_scans'] > 0 else 0,
                     'avg_confidence': round(avg_confidence * 100, 1) if avg_confidence else 0
                 }
-    
-    # Get age group distribution
-    c.execute('''
-        SELECT 
-            CASE 
+        
+        # Get age group distribution
+        c.execute('''
+            SELECT 
+                CASE 
                     WHEN CAST(age AS INTEGER) < 18 THEN 'Under 18'
                     WHEN CAST(age AS INTEGER) BETWEEN 18 AND 30 THEN '18-30'
                     WHEN CAST(age AS INTEGER) BETWEEN 31 AND 50 THEN '31-50'
                     WHEN CAST(age AS INTEGER) BETWEEN 51 AND 70 THEN '51-70'
-                ELSE 'Over 70'
-            END as age_group,
-            COUNT(*) as count
-        FROM reports 
+                    ELSE 'Over 70'
+                END as age_group,
+                COUNT(*) as count
+            FROM reports 
             WHERE age IS NOT NULL AND age != ''
-        GROUP BY age_group
+            GROUP BY age_group
             ORDER BY age_group
-    ''')
-    for row in c.fetchall():
+        ''')
+        
+        for row in c.fetchall():
             if row[0]:
-        stats['age_groups'][row[0]] = row[1]
-    
-    # Get gender distribution
+                stats['age_groups'][row[0]] = row[1]
+        
+        # Get gender distribution
         c.execute('''
             SELECT 
                 COALESCE(UPPER(gender), 'O') as gender,
@@ -698,31 +740,33 @@ def get_analytics_data():
             FROM reports 
             GROUP BY UPPER(gender)
         ''')
-    for row in c.fetchall():
+        
+        for row in c.fetchall():
             gender = row[0] if row[0] in ['M', 'F', 'O'] else 'O'
             stats['gender_distribution'][gender] = row[1]
-    
-    # Get confidence level distribution
-    c.execute('''
-        SELECT 
-            CASE 
-                WHEN confidence >= 0.8 THEN 'high'
-                WHEN confidence >= 0.6 THEN 'medium'
-                ELSE 'low'
-            END as confidence_level,
-            COUNT(*) as count
-        FROM reports 
-        GROUP BY confidence_level
-    ''')
-    for row in c.fetchall():
+        
+        # Get confidence level distribution
+        c.execute('''
+            SELECT 
+                CASE 
+                    WHEN confidence >= 0.8 THEN 'high'
+                    WHEN confidence >= 0.6 THEN 'medium'
+                    ELSE 'low'
+                END as confidence_level,
+                COUNT(*) as count
+            FROM reports 
+            GROUP BY confidence_level
+        ''')
+        
+        for row in c.fetchall():
             if row[0]:
-        stats['accuracy_metrics'][f'{row[0]}_confidence'] = row[1]
+                stats['accuracy_metrics'][f'{row[0]}_confidence'] = row[1]
     
     except Exception as e:
         print(f"Error getting analytics data: {str(e)}")
     
     finally:
-    conn.close()
+        conn.close()
     
     return stats
 

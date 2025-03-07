@@ -16,6 +16,7 @@ lib64/
 parts/
 sdist/
 var/
+wheels/
 *.egg-info/
 .installed.cfg
 *.egg
@@ -24,20 +25,27 @@ var/
 venv/
 ENV/
 
-# Database
-*.db
-*.sqlite3
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
 
-# Uploads and generated files
+# Project specific
 static/uploads/*
 static/reports/*
 static/heatmaps/*
+*.db
+*.sqlite3
 
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
+# Keep directories but ignore contents
+!static/uploads/.gitkeep
+!static/reports/.gitkeep
+!static/heatmaps/.gitkeep
+
+# OS specific
+.DS_Store
+Thumbs.db
 
 # Model files and checkpoints
 *.pth
@@ -56,11 +64,6 @@ static/heatmaps/*
 *.json
 !requirements.txt
 !render.yaml
-
-# Keep directory structure
-!static/uploads/.gitkeep
-!static/reports/.gitkeep
-!static/heatmaps/.gitkeep
 
 # Checkpoints
 checkpoints/*
