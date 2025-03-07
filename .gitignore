@@ -29,8 +29,9 @@ ENV/
 *.sqlite3
 
 # Uploads and generated files
-# static/uploads/*
-# static/reports/*
+static/uploads/*
+static/reports/*
+static/heatmaps/*
 
 # IDE
 .vscode/
@@ -38,10 +39,29 @@ ENV/
 *.swp
 *.swo
 
+# Model files and checkpoints
+*.pth
+*.pt
+*.ckpt
+*.h5
+*.hdf5
+*.pkl
+*.model
+*.weights
+
+# Large data files
+*.npy
+*.npz
+*.csv
+*.json
+!requirements.txt
+!render.yaml
+
+# Keep directory structure
+!static/uploads/.gitkeep
+!static/reports/.gitkeep
+!static/heatmaps/.gitkeep
+
 # Checkpoints
 checkpoints/*
-!checkpoints/.gitkeep
-
-# Allow all files in static folder
-!static/uploads/
-!static/reports/ 
+!checkpoints/.gitkeep 

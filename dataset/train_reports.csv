@@ -1,6 +1,0 @@
-image,report
-dataset/train_images\xray1.jpeg,Chest x-ray shows normal heart size with clear lung fields. No evidence of pneumonia or effusions.
-dataset/train_images\xray2.jpeg,Chest x-ray shows normal heart size with clear lung fields. No evidence of pneumonia or effusions.
-dataset/train_images\xray3.jpeg,Chest x-ray shows normal heart size with clear lung fields. No evidence of pneumonia or effusions.
-dataset/train_images\xray4.jpeg,Chest x-ray shows normal heart size with clear lung fields. No evidence of pneumonia or effusions.
-dataset/train_images\xray5.jpeg,Chest x-ray shows normal heart size with clear lung fields. No evidence of pneumonia or effusions.

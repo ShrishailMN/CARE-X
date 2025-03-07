@@ -15,6 +15,12 @@ import json
 
 app = Flask(__name__)
 
+# Add this line for Render
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
+
+# Modify the database path to use absolute path
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'reports.db')
+
 class XrayAnalyzer(nn.Module):
     def __init__(self):
         super(XrayAnalyzer, self).__init__()
@@ -353,9 +359,9 @@ def generate_pdf_report(report_text, image_path, condition, confidence, patient_
     pdf.output(pdf_path)
     return pdf_path
 
-# Add this function to create the database
+# Modify the init_db function
 def init_db():
-    conn = sqlite3.connect('reports.db')
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS reports
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -373,9 +379,9 @@ def init_db():
     conn.commit()
     conn.close()
 
-# Add this function to save report to database
+# Modify save_report_to_db function
 def save_report_to_db(patient_info, condition, confidence, report_text, image_path, pdf_path):
-    conn = sqlite3.connect('reports.db')
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('''INSERT INTO reports 
                  (patient_name, patient_id, age, gender, exam_date, 
@@ -494,7 +500,7 @@ def download_report(timestamp):
 
 @app.route('/view_reports')
 def view_reports():
-    conn = sqlite3.connect('reports.db')
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('''SELECT id, patient_name, patient_id, condition, exam_date, 
                  confidence, image_path, pdf_path, created_at 
@@ -527,7 +533,7 @@ def get_confidence_metrics(features):
     return metrics
 
 def analyze_patient_history(patient_id):
-    conn = sqlite3.connect('reports.db')
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('''
         SELECT condition, confidence, created_at 
@@ -621,7 +627,7 @@ def send_emergency_alert(condition, severity):
 
 # Add these functions for analytics
 def get_analytics_data():
-    conn = sqlite3.connect('reports.db')
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     
     # Initialize stats with default values
@@ -768,7 +774,7 @@ def generate_heatmap_overlay(image_tensor, model):
 
 def analyze_patient_progression(patient_id):
     """Track patient condition changes over time"""
-    conn = sqlite3.connect('reports.db')
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     
     c.execute('''
@@ -974,7 +980,16 @@ def get_heatmap(image_id):
             'error': str(e)
         })
 
-# Initialize database when starting the app
+# Modify the main section
 if __name__ == '__main__':
+    # Create necessary directories
+    os.makedirs('static/uploads', exist_ok=True)
+    os.makedirs('static/reports', exist_ok=True)
+    os.makedirs('static/heatmaps', exist_ok=True)
+    
+    # Initialize database
     init_db()
-    app.run(debug=True) 
+    
+    # Get port from environment variable or use default
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False) 
