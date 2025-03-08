@@ -1,9 +1,9 @@
-# gunicorn_config.py
 bind = "0.0.0.0:10000"
-workers = 1
+workers = 1  # Single worker for limited memory
 threads = 2
-timeout = 300
+timeout = 120
 worker_class = 'gthread'
-max_requests = 1000
-max_requests_jitter = 50
-preload_app = True
+max_requests = 100
+max_requests_jitter = 20
+preload_app = False  # Changed to False to reduce memory usage
+worker_tmp_dir = '/tmp'  # Use temporary directory
