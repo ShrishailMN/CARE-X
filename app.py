@@ -1264,25 +1264,24 @@ def get_heatmap(image_id):
 
 # Modify the main section
 if __name__ == '__main__':
-    try:
-        # Create necessary directories
-        os.makedirs('static/uploads', exist_ok=True)
-        os.makedirs('static/reports', exist_ok=True)
-        os.makedirs('static/heatmaps', exist_ok=True)
-        
-        # Initialize database
-        init_db()
-        
-        # Configure app
-        app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
-        app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
-        app.config['TEMPLATES_AUTO_RELOAD'] = False  # Disable in production
-        
-        # Get port from environment
-        port = int(os.environ.get('PORT', 10000))
-        
-        # Run app
-        app.run(host='0.0.0.0', port=port, threaded=True)
-        
-    except Exception as e:
-        print(f"Startup error: {str(e)}")
+    # Create necessary directories
+    os.makedirs('static/uploads', exist_ok=True)
+    os.makedirs('static/reports', exist_ok=True)
+    os.makedirs('static/heatmaps', exist_ok=True)
+    
+    # Initialize database
+    init_db()
+    
+    # Configure app for production
+    app.config.update(
+        MAX_CONTENT_LENGTH=16 * 1024 * 1024,  # 16MB max file size
+        SEND_FILE_MAX_AGE_DEFAULT=0,
+        TEMPLATES_AUTO_RELOAD=False,  # Disable in production
+        PROPAGATE_EXCEPTIONS=True
+    )
+    
+    # Get port from environment
+    port = int(os.environ.get('PORT', 10000))
+    
+    # Run app
+    app.run(host='0.0.0.0', port=port)
