@@ -15,15 +15,34 @@ import json
 
 import gc
 import torch
+import os
+import psutil
 
-# Configure for low memory usage
-torch.set_grad_enabled(False)  # Disable gradient computation
+# Configure for minimum memory usage
+torch.set_grad_enabled(False)
 if torch.cuda.is_available():
     torch.cuda.empty_cache()
 
 # Set lower memory usage for PIL
 from PIL import Image
 Image.MAX_IMAGE_PIXELS = None
+
+# Configure Flask app
+app = Flask(__name__)
+app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024  # Limit to 5MB uploads
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
+app.config['TEMPLATES_AUTO_RELOAD'] = False
+
+# Memory monitoring
+def check_memory():
+    process = psutil.Process(os.getpid())
+    memory_info = process.memory_info()
+    memory_percent = process.memory_percent()
+    
+    if memory_percent > 80:  # If using more than 80% of available memory
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
 app = Flask(__name__)
 
@@ -139,6 +158,29 @@ def get_analytics_data():
     finally:
         conn.close()
 
+
+def cleanup_old_files():
+    """Clean up old files to prevent disk space issues"""
+    try:
+        # Keep only last 10 files in each directory
+        for directory in ['static/uploads', 'static/reports', 'static/heatmaps']:
+            if os.path.exists(directory):
+                files = sorted([os.path.join(directory, f) for f in os.listdir(directory)], 
+                             key=os.path.getmtime)
+                # Remove old files, keeping only the last 10
+                for old_file in files[:-10]:
+                    try:
+                        os.remove(old_file)
+                    except:
+                        pass
+    except:
+        pass
+
+@app.before_request
+def before_request():
+    check_memory()
+    cleanup_old_files()
+
 # Add this new route with your other routes
 @app.route('/db_status')
 def db_status():
@@ -203,10 +245,14 @@ class XrayAnalyzer(nn.Module):
         features = self.densenet(x)
         return features
 
-# Initialize model
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+# Initialize model with lower memory usage
+device = torch.device('cpu')  # Force CPU usage on free tier
 model = XrayAnalyzer().to(device)
 model.eval()
+
+# Use lower precision
+model = model.half()  # Use half precision
+torch.set_grad_enabled(False)  # Disable gradient computation
 
 # Enhanced image preprocessing
 image_transforms = transforms.Compose([
@@ -455,26 +501,26 @@ def analyze_image(image_tensor):
 
 def process_image(image_path):
     try:
-        # Clear memory
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         
-        # Open image with memory efficient mode
         with Image.open(image_path) as img:
-            # Convert and resize in one step
+            # Resize immediately to save memory
             img = img.convert('RGB').resize((224, 224), Image.Resampling.LANCZOS)
-            # Convert to tensor
-            image_tensor = transforms.ToTensor()(img)
+            # Convert to tensor with half precision
+            image_tensor = transforms.ToTensor()(img).half()
             image_tensor = transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])(image_tensor)
             image_tensor = image_tensor.unsqueeze(0)
             
-            # Move to device
             result = image_tensor.to(device)
-            
-            # Clear unnecessary variables
             del img
-            gc.collect()
+            return result
+    except Exception as e:
+        print(f"Error processing image: {str(e)}")
+        return None
+    finally:
+        gc.collect()
             
             return result
     except Exception as e:
