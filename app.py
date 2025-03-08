@@ -522,7 +522,7 @@ def process_image(image_path):
     finally:
         gc.collect()
             
-            return result
+    return result
     except Exception as e:
         print(f"Error processing image: {str(e)}")
         return None
