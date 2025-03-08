@@ -13,6 +13,18 @@ import sqlite3
 import numpy as np
 import json
 
+import gc
+import torch
+
+# Configure for low memory usage
+torch.set_grad_enabled(False)  # Disable gradient computation
+if torch.cuda.is_available():
+    torch.cuda.empty_cache()
+
+# Set lower memory usage for PIL
+from PIL import Image
+Image.MAX_IMAGE_PIXELS = None
+
 app = Flask(__name__)
 
 # Add these functions right after app = Flask(__name__) and before your routes:
@@ -443,31 +455,34 @@ def analyze_image(image_tensor):
 
 def process_image(image_path):
     try:
-        # Clear any existing tensors from GPU/CPU memory
+        # Clear memory
+        gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         
-        # Open and convert image to RGB
-        image = Image.open(image_path).convert('RGB')
-        
-        # Apply transformations
-        image_tensor = image_transforms(image)
-        
-        # Add batch dimension
-        image_tensor = image_tensor.unsqueeze(0)
-        
-        # Move to device and return
-        result = image_tensor.to(device)
-        
-        # Clear unnecessary variables
-        del image
-        
-        return result
+        # Open image with memory efficient mode
+        with Image.open(image_path) as img:
+            # Convert and resize in one step
+            img = img.convert('RGB').resize((224, 224), Image.Resampling.LANCZOS)
+            # Convert to tensor
+            image_tensor = transforms.ToTensor()(img)
+            image_tensor = transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])(image_tensor)
+            image_tensor = image_tensor.unsqueeze(0)
+            
+            # Move to device
+            result = image_tensor.to(device)
+            
+            # Clear unnecessary variables
+            del img
+            gc.collect()
+            
+            return result
     except Exception as e:
         print(f"Error processing image: {str(e)}")
         return None
     finally:
-        # Ensure memory is cleared
+        # Final cleanup
+        gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
@@ -661,6 +676,11 @@ def translate_report(report_text, language='en'):
 @app.route('/generate_report', methods=['POST'])
 def generate_report_endpoint():
     try:
+        # Clear memory before processing
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
         # Check if file exists in request
         if 'file' not in request.files and 'image' not in request.files:
             return jsonify({
@@ -690,71 +710,98 @@ def generate_report_endpoint():
             'date': request.form.get('examDate', datetime.now().strftime('%Y-%m-%d'))
         }
         
-        # Save image with timestamp
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        image_path = os.path.join('static/uploads', f'image_{timestamp}.jpg')
-        image.save(image_path)
-        
-        # Process image
         try:
-            image_tensor = process_image(image_path)
-            if image_tensor is None:
-                raise Exception("Failed to process image")
-        except Exception as e:
+            # Save image with timestamp
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            image_path = os.path.join('static/uploads', f'image_{timestamp}.jpg')
+            image.save(image_path)
+            
+            # Process image with memory cleanup
+            image_tensor = None
+            try:
+                image_tensor = process_image(image_path)
+                if image_tensor is None:
+                    raise Exception("Failed to process image")
+            except Exception as e:
+                # Clean up saved image if processing fails
+                if os.path.exists(image_path):
+                    os.remove(image_path)
+                return jsonify({
+                    'error': 'Image processing failed',
+                    'message': str(e)
+                }), 500
+            
+            # Analyze image
+            report_text = ""
+            confidence = 0
+            condition = ""
+            try:
+                report_text, confidence, condition = analyze_image(image_tensor)
+                # Clear image tensor after analysis
+                del image_tensor
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except Exception as e:
+                return jsonify({
+                    'error': 'Analysis failed',
+                    'message': str(e)
+                }), 500
+            
+            # Generate PDF
+            pdf_path = ""
+            try:
+                pdf_path = generate_pdf_report(
+                    patient_info['name'],
+                    patient_info['age'],
+                    patient_info['gender'],
+                    report_text,
+                    "Follow standard medical advice",
+                    image_path
+                )
+            except Exception as e:
+                return jsonify({
+                    'error': 'PDF generation failed',
+                    'message': str(e)
+                }), 500
+            
+            # Save to database
+            try:
+                init_db()  # Ensure database exists
+                save_report_to_db(patient_info, condition, confidence, report_text, image_path, pdf_path)
+            except Exception as e:
+                print(f"Database error: {str(e)}")
+                # Continue even if database save fails
+            
+            # Return success response
             return jsonify({
-                'error': 'Image processing failed',
-                'message': str(e)
-            }), 500
-        
-        # Analyze image
-        try:
-            report_text, confidence, condition = analyze_image(image_tensor)
+                'success': True,
+                'report': report_text,
+                'condition': condition,
+                'confidence': f"{confidence:.1%}",
+                'image_url': '/' + image_path,
+                'pdf_url': '/' + pdf_path
+            })
+            
         except Exception as e:
-            return jsonify({
-                'error': 'Analysis failed',
-                'message': str(e)
-            }), 500
-        
-        # Generate PDF
-        try:
-            pdf_path = generate_pdf_report(
-                patient_info['name'],
-                patient_info['age'],
-                patient_info['gender'],
-                report_text,
-                "Follow standard medical advice",
-                image_path
-            )
-        except Exception as e:
-            return jsonify({
-                'error': 'PDF generation failed',
-                'message': str(e)
-            }), 500
-        
-        # Save to database
-        try:
-            init_db()  # Ensure database exists
-            save_report_to_db(patient_info, condition, confidence, report_text, image_path, pdf_path)
-        except Exception as e:
-            print(f"Database error: {str(e)}")
-            # Continue even if database save fails
-        
-        # Return success response
-        return jsonify({
-            'success': True,
-            'report': report_text,
-            'condition': condition,
-            'confidence': f"{confidence:.1%}",
-            'image_url': '/' + image_path,
-            'pdf_url': '/' + pdf_path
-        })
-        
+            # Clean up files in case of error
+            if 'image_path' in locals() and os.path.exists(image_path):
+                os.remove(image_path)
+            if 'pdf_path' in locals() and os.path.exists(pdf_path):
+                os.remove(pdf_path)
+            raise e
+            
     except Exception as e:
         print(f"Error in generate_report: {str(e)}")
         return jsonify({
             'error': 'Report generation failed',
             'message': str(e)
         }), 500
+    finally:
+        # Final cleanup
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
 @app.route('/download_report/<timestamp>')
 def download_report(timestamp):
