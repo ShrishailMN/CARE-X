@@ -15,6 +15,138 @@ import json
 
 app = Flask(__name__)
 
+# Add these functions right after app = Flask(__name__) and before your routes:
+
+def get_db_connection():
+    try:
+        # Ensure database is initialized
+        if not os.path.exists(DB_PATH):
+            init_db()
+        return sqlite3.connect(DB_PATH)
+    except Exception as e:
+        print(f"Error connecting to database: {str(e)}")
+        raise
+
+def get_analytics_data():
+    conn = get_db_connection()
+    try:
+        c = conn.cursor()
+        
+        # Initialize default stats
+        stats = {
+            'total_scans': 0,
+            'conditions': {
+                'normal': {'count': 0, 'percentage': 0, 'avg_confidence': 0},
+                'pneumonia': {'count': 0, 'percentage': 0, 'avg_confidence': 0}
+            },
+            'age_groups': {},
+            'gender_distribution': {'M': 0, 'F': 0, 'O': 0},
+            'accuracy_metrics': {
+                'high_confidence': 0,
+                'medium_confidence': 0,
+                'low_confidence': 0
+            }
+        }
+        
+        # Get total scans
+        c.execute('SELECT COUNT(*) FROM reports')
+        stats['total_scans'] = c.fetchone()[0] or 0
+        
+        # Get condition distribution
+        c.execute('''
+            SELECT 
+                LOWER(condition) as condition,
+                COUNT(*) as count,
+                AVG(confidence) as avg_confidence
+            FROM reports 
+            GROUP BY LOWER(condition)
+        ''')
+        
+        for row in c.fetchall():
+            condition = row[0].lower() if row[0] else 'unknown'
+            count = row[1]
+            avg_confidence = row[2] or 0
+            
+            if condition in stats['conditions']:
+                stats['conditions'][condition] = {
+                    'count': count,
+                    'percentage': round((count / stats['total_scans']) * 100, 1) if stats['total_scans'] > 0 else 0,
+                    'avg_confidence': round(avg_confidence * 100, 1)
+                }
+        
+        # Get age distribution
+        c.execute('''
+            SELECT 
+                CASE 
+                    WHEN CAST(age AS INTEGER) < 18 THEN 'Under 18'
+                    WHEN CAST(age AS INTEGER) BETWEEN 18 AND 30 THEN '18-30'
+                    WHEN CAST(age AS INTEGER) BETWEEN 31 AND 50 THEN '31-50'
+                    WHEN CAST(age AS INTEGER) BETWEEN 51 AND 70 THEN '51-70'
+                    ELSE 'Over 70'
+                END as age_group,
+                COUNT(*) as count
+            FROM reports 
+            WHERE age IS NOT NULL AND age != ''
+            GROUP BY age_group
+            ORDER BY age_group
+        ''')
+        
+        for row in c.fetchall():
+            if row[0]:
+                stats['age_groups'][row[0]] = row[1]
+        
+        # Get gender distribution
+        c.execute('''
+            SELECT gender, COUNT(*) 
+            FROM reports 
+            GROUP BY gender
+        ''')
+        
+        for row in c.fetchall():
+            gender = row[0] if row[0] in ['M', 'F', 'O'] else 'O'
+            stats['gender_distribution'][gender] = row[1]
+            
+        return stats
+            
+    except Exception as e:
+        print(f"Database error in analytics: {str(e)}")
+        return {
+            'total_scans': 0,
+            'conditions': {
+                'normal': {'count': 0, 'percentage': 0, 'avg_confidence': 0},
+                'pneumonia': {'count': 0, 'percentage': 0, 'avg_confidence': 0}
+            },
+            'age_groups': {},
+            'gender_distribution': {'M': 0, 'F': 0, 'O': 0},
+            'accuracy_metrics': {
+                'high_confidence': 0,
+                'medium_confidence': 0,
+                'low_confidence': 0
+            }
+        }
+    finally:
+        conn.close()
+
+# Add this new route with your other routes
+@app.route('/db_status')
+def db_status():
+    try:
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute('SELECT COUNT(*) FROM reports')
+        count = c.fetchone()[0]
+        conn.close()
+        return jsonify({
+            'status': 'ok',
+            'message': 'Database is working',
+            'report_count': count
+        })
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
 
 @app.errorhandler(404)
 def not_found_error(error):
@@ -37,7 +169,9 @@ def handle_exception(error):
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 
 # Modify the database path to use absolute path
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'reports.db')
+# Near the top of your file, after the imports
+DB_PATH = os.path.join(os.getcwd(), 'reports.db')
+
 
 class XrayAnalyzer(nn.Module):
     def __init__(self):
@@ -414,27 +548,38 @@ def generate_pdf_report(patient_name, age, gender, findings, recommendations, im
 # Modify the init_db function
 def init_db():
     try:
+        # Ensure directory exists
         os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+        
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
-        c.execute('''CREATE TABLE IF NOT EXISTS reports
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                      patient_name TEXT,
-                      patient_id TEXT,
-                      age TEXT,
-                      gender TEXT,
-                      exam_date TEXT,
-                      condition TEXT,
-                      confidence REAL,
-                      report_text TEXT,
-                      image_path TEXT,
-                      pdf_path TEXT,
-                      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+        
+        # Create the reports table if it doesn't exist
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS reports
+            (id INTEGER PRIMARY KEY AUTOINCREMENT,
+             patient_name TEXT,
+             patient_id TEXT,
+             age TEXT,
+             gender TEXT,
+             exam_date TEXT,
+             condition TEXT,
+             confidence REAL,
+             report_text TEXT,
+             image_path TEXT,
+             pdf_path TEXT,
+             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)
+        ''')
+        
         conn.commit()
-        conn.close()
+        print("Database initialized successfully")
+        
     except Exception as e:
-        print(f"Database initialization error: {str(e)}")
+        print(f"Error initializing database: {str(e)}")
         raise
+    finally:
+        if 'conn' in locals():
+            conn.close()
 
 # Modify save_report_to_db function
 def save_report_to_db(patient_info, condition, confidence, report_text, image_path, pdf_path):
@@ -1105,20 +1250,25 @@ def get_heatmap(image_id):
 
 # Modify the main section
 if __name__ == '__main__':
-    # Create necessary directories
-    os.makedirs('static/uploads', exist_ok=True)
-    os.makedirs('static/reports', exist_ok=True)
-    os.makedirs('static/heatmaps', exist_ok=True)
-    
-    # Initialize database
-    init_db()
-    
-    # Get port from environment variable or use default
-    port = int(os.environ.get('PORT', 10000))
-    
-    # Configure for production
-    app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
-    app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
-    app.config['TEMPLATES_AUTO_RELOAD'] = True
-    
-    app.run(host='0.0.0.0', port=port, debug=False)
+    try:
+        # Create necessary directories
+        os.makedirs('static/uploads', exist_ok=True)
+        os.makedirs('static/reports', exist_ok=True)
+        os.makedirs('static/heatmaps', exist_ok=True)
+        
+        # Initialize database
+        init_db()
+        
+        # Configure app
+        app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
+        app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
+        app.config['TEMPLATES_AUTO_RELOAD'] = True
+        
+        # Get port from environment
+        port = int(os.environ.get('PORT', 10000))
+        
+        # Run app
+        app.run(host='0.0.0.0', port=port)
+        
+    except Exception as e:
+        print(f"Startup error: {str(e)}")
