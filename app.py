@@ -763,7 +763,7 @@ def get_analytics_data():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     
-    # Initialize stats with default values
+    # Initialize default stats
     stats = {
         'total_scans': 0,
         'conditions': {
@@ -780,7 +780,11 @@ def get_analytics_data():
     }
     
     try:
-        # Get total scans and condition distribution
+        # Get total scans
+        c.execute('SELECT COUNT(*) FROM reports')
+        stats['total_scans'] = c.fetchone()[0] or 0
+        
+        # Get condition distribution
         c.execute('''
             SELECT 
                 LOWER(condition) as condition,
@@ -790,19 +794,19 @@ def get_analytics_data():
             GROUP BY LOWER(condition)
         ''')
         
-        rows = c.fetchall()
-        stats['total_scans'] = sum(row[1] for row in rows)
-        
-        # Process each condition
-        for condition, count, avg_confidence in rows:
+        for row in c.fetchall():
+            condition = row[0].lower() if row[0] else 'unknown'
+            count = row[1]
+            avg_confidence = row[2] or 0
+            
             if condition in stats['conditions']:
                 stats['conditions'][condition] = {
                     'count': count,
                     'percentage': round((count / stats['total_scans']) * 100, 1) if stats['total_scans'] > 0 else 0,
-                    'avg_confidence': round(avg_confidence * 100, 1) if avg_confidence else 0
+                    'avg_confidence': round(avg_confidence * 100, 1)
                 }
         
-        # Get age group distribution
+        # Get age distribution
         c.execute('''
             SELECT 
                 CASE 
@@ -825,37 +829,17 @@ def get_analytics_data():
         
         # Get gender distribution
         c.execute('''
-            SELECT 
-                COALESCE(UPPER(gender), 'O') as gender,
-                COUNT(*) as count
+            SELECT gender, COUNT(*) 
             FROM reports 
-            GROUP BY UPPER(gender)
+            GROUP BY gender
         ''')
         
         for row in c.fetchall():
             gender = row[0] if row[0] in ['M', 'F', 'O'] else 'O'
             stats['gender_distribution'][gender] = row[1]
-        
-        # Get confidence level distribution
-        c.execute('''
-            SELECT 
-                CASE 
-                    WHEN confidence >= 0.8 THEN 'high'
-                    WHEN confidence >= 0.6 THEN 'medium'
-                    ELSE 'low'
-                END as confidence_level,
-                COUNT(*) as count
-            FROM reports 
-            GROUP BY confidence_level
-        ''')
-        
-        for row in c.fetchall():
-            if row[0]:
-                stats['accuracy_metrics'][f'{row[0]}_confidence'] = row[1]
-    
+            
     except Exception as e:
-        print(f"Error getting analytics data: {str(e)}")
-    
+        print(f"Database error in analytics: {str(e)}")
     finally:
         conn.close()
     
@@ -866,22 +850,25 @@ def get_analytics_data():
 def analytics():
     try:
         stats = get_analytics_data()
-        if not stats['total_scans']:
-            stats = {
-                'total_scans': 0,
-                'conditions': {},
-                'age_groups': {},
-                'gender_distribution': {'M': 0, 'F': 0, 'O': 0}
-            }
         return render_template('analytics.html', stats=stats)
     except Exception as e:
         print(f"Analytics error: {str(e)}")
-        return render_template('analytics.html', stats={
+        # Return empty stats if there's an error
+        empty_stats = {
             'total_scans': 0,
-            'conditions': {},
+            'conditions': {
+                'normal': {'count': 0, 'percentage': 0, 'avg_confidence': 0},
+                'pneumonia': {'count': 0, 'percentage': 0, 'avg_confidence': 0}
+            },
             'age_groups': {},
-            'gender_distribution': {'M': 0, 'F': 0, 'O': 0}
-        })
+            'gender_distribution': {'M': 0, 'F': 0, 'O': 0},
+            'accuracy_metrics': {
+                'high_confidence': 0,
+                'medium_confidence': 0,
+                'low_confidence': 0
+            }
+        }
+        return render_template('analytics.html', stats=empty_stats)
 
 # Add new feature functions
 def generate_heatmap_overlay(image_tensor, model):
@@ -1118,17 +1105,20 @@ def get_heatmap(image_id):
 
 # Modify the main section
 if __name__ == '__main__':
-    try:
-        # Create necessary directories
-        os.makedirs('static/uploads', exist_ok=True)
-        os.makedirs('static/reports', exist_ok=True)
-        os.makedirs('static/heatmaps', exist_ok=True)
-        
-        # Initialize database
-        init_db()
-        
-        # Get port from environment variable or use default
-        port = int(os.environ.get('PORT', 10000))
-        app.run(host='0.0.0.0', port=port, debug=False)
-    except Exception as e:
-        print(f"Startup error: {str(e)}")
+    # Create necessary directories
+    os.makedirs('static/uploads', exist_ok=True)
+    os.makedirs('static/reports', exist_ok=True)
+    os.makedirs('static/heatmaps', exist_ok=True)
+    
+    # Initialize database
+    init_db()
+    
+    # Get port from environment variable or use default
+    port = int(os.environ.get('PORT', 10000))
+    
+    # Configure for production
+    app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
+    app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
+    app.config['TEMPLATES_AUTO_RELOAD'] = True
+    
+    app.run(host='0.0.0.0', port=port, debug=False)
