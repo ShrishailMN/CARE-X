@@ -442,8 +442,11 @@ def analyze_image(image_tensor):
         return report + confidence_text, confidence, primary_condition
 
 def process_image(image_path):
-    """Process image using PIL instead of cv2"""
     try:
+        # Clear any existing tensors from GPU/CPU memory
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        
         # Open and convert image to RGB
         image = Image.open(image_path).convert('RGB')
         
@@ -452,10 +455,21 @@ def process_image(image_path):
         
         # Add batch dimension
         image_tensor = image_tensor.unsqueeze(0)
-        return image_tensor.to(device)
+        
+        # Move to device and return
+        result = image_tensor.to(device)
+        
+        # Clear unnecessary variables
+        del image
+        
+        return result
     except Exception as e:
         print(f"Error processing image: {str(e)}")
         return None
+    finally:
+        # Ensure memory is cleared
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
 def generate_pdf_report(patient_name, age, gender, findings, recommendations, image_path=None):
     # Create a temporary file for the PDF
@@ -1262,13 +1276,13 @@ if __name__ == '__main__':
         # Configure app
         app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
         app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
-        app.config['TEMPLATES_AUTO_RELOAD'] = True
+        app.config['TEMPLATES_AUTO_RELOAD'] = False  # Disable in production
         
         # Get port from environment
         port = int(os.environ.get('PORT', 10000))
         
         # Run app
-        app.run(host='0.0.0.0', port=port)
+        app.run(host='0.0.0.0', port=port, threaded=True)
         
     except Exception as e:
         print(f"Startup error: {str(e)}")
