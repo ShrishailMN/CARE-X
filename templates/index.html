@@ -178,6 +178,30 @@
                 font-size: 2.5rem;
             }
         }
+
+        #loadingMessage {
+            display: none;
+            text-align: center;
+            margin-top: 20px;
+            padding: 20px;
+            background-color: #f8f9fa;
+            border-radius: 5px;
+        }
+
+        .loading-spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
     </style>
 </head>
 <body>
@@ -289,7 +313,7 @@
                             </div>
                             <div id="imagePreview" class="text-center"></div>
                             <div class="text-center mt-4">
-                                <button type="submit" class="btn btn-primary">Generate Report</button>
+                                <button type="submit" class="btn btn-primary" id="submitButton">Generate Report</button>
                             </div>
                         </form>
                     </div>
@@ -313,6 +337,12 @@
         </div>
     </footer>
 
+    <div id="loadingMessage">
+        <div class="loading-spinner"></div>
+        <p>Processing your image... This may take a few minutes.</p>
+        <p>Please do not close this window.</p>
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     <script>
         // Set current date
@@ -333,6 +363,59 @@
                 reader.readAsDataURL(file);
             }
         });
+
+        document.getElementById('uploadForm').onsubmit = async function(e) {
+            e.preventDefault();
+            
+            // Show loading state
+            document.getElementById('submitButton').disabled = true;
+            document.getElementById('loadingMessage').style.display = 'block';
+            
+            const formData = new FormData(this);
+            
+            try {
+                const response = await fetch('/generate_report', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.message || 'Failed to process image');
+                }
+                
+                const timestamp = new Date().toISOString().replace(/[-:.]/g, '');
+                
+                // Start polling for status
+                const statusCheck = setInterval(async () => {
+                    const statusResponse = await fetch(`/check_status/${timestamp}`);
+                    const statusData = await statusResponse.json();
+                    
+                    if (statusData.status === 'complete') {
+                        clearInterval(statusCheck);
+                        window.location.href = statusData.pdf_url;
+                    } else if (statusData.status === 'error') {
+                        clearInterval(statusCheck);
+                        alert('Error processing image: ' + statusData.message);
+                        document.getElementById('submitButton').disabled = false;
+                        document.getElementById('loadingMessage').style.display = 'none';
+                    }
+                }, 2000); // Check every 2 seconds
+                
+                // Set timeout after 5 minutes
+                setTimeout(() => {
+                    clearInterval(statusCheck);
+                    alert('Processing is taking longer than expected. Please try again.');
+                    document.getElementById('submitButton').disabled = false;
+                    document.getElementById('loadingMessage').style.display = 'none';
+                }, 300000);
+                
+            } catch (error) {
+                alert(error.message);
+                document.getElementById('submitButton').disabled = false;
+                document.getElementById('loadingMessage').style.display = 'none';
+            }
+        };
     </script>
 </body>
 </html>
