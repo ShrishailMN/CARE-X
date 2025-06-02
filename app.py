@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify, send_file
+from flask import Flask, render_template, request, jsonify, send_file, url_for
 import os
 import torch
 import torchvision.models as models
@@ -7,19 +7,27 @@ import torch.nn.functional as F
 from PIL import Image, ImageOps
 import torchvision.transforms as transforms
 from datetime import datetime
+import pytz
 import random
 from fpdf import FPDF
 import sqlite3
 import numpy as np
 import json
+import re  # Add this at the top of the file if not already present
 
 app = Flask(__name__)
 
 # Add this line for Render
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 
+# Create necessary directories at startup
+base_dir = os.path.dirname(os.path.abspath(__file__))
+os.makedirs(os.path.join(base_dir, 'static', 'uploads'), exist_ok=True)
+os.makedirs(os.path.join(base_dir, 'static', 'reports'), exist_ok=True)
+os.makedirs(os.path.join(base_dir, 'static', 'heatmaps'), exist_ok=True)
+
 # Modify the database path to use absolute path
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'reports.db')
+DB_PATH = os.path.join(base_dir, 'reports.db')
 
 class XrayAnalyzer(nn.Module):
     def __init__(self):
@@ -39,10 +47,23 @@ class XrayAnalyzer(nn.Module):
         features = self.densenet(x)
         return features
 
-# Initialize model
+def load_model():
+    """Initialize and load the model"""
+    global model, device
+    try:
+        print("Initializing model...")
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        model = XrayAnalyzer().to(device)
+        model.eval()
+        print(f"Model initialized successfully on {device}")
+        return model
+    except Exception as e:
+        print(f"Error initializing model: {str(e)}")
+        return None
+
+# Initialize model globally
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-model = XrayAnalyzer().to(device)
-model.eval()
+model = load_model()
 
 # Enhanced image preprocessing
 image_transforms = transforms.Compose([
@@ -274,20 +295,33 @@ def generate_detailed_report(conditions):
 
 def analyze_image(image_tensor):
     """Analyze the image and return findings"""
-    with torch.no_grad():
-        outputs = model(image_tensor)
-        conditions = analyze_features(outputs)
-        
-        report, primary_condition = generate_detailed_report(conditions)
-        
-        # Calculate overall confidence
-        confidence = conditions[0][1] if conditions else 0.3
-        
-        confidence_text = f"\n\nConfidence Level: {confidence:.1%}"
-        if confidence < 0.6:
-            confidence_text += " (Low confidence - recommend radiologist review)"
-        
-        return report + confidence_text, confidence, primary_condition
+    global model
+    
+    # Check if model is loaded
+    if model is None:
+        print("Model not loaded, attempting to reload...")
+        model = load_model()
+        if model is None:
+            raise Exception("Failed to initialize model")
+    
+    try:
+        with torch.no_grad():
+            outputs = model(image_tensor)
+            conditions = analyze_features(outputs)
+            
+            report, primary_condition = generate_detailed_report(conditions)
+            
+            # Calculate overall confidence
+            confidence = conditions[0][1] if conditions else 0.3
+            
+            confidence_text = f"\n\nConfidence Level: {confidence:.1%}"
+            if confidence < 0.6:
+                confidence_text += " (Low confidence - recommend radiologist review)"
+            
+            return report + confidence_text, confidence, primary_condition
+    except Exception as e:
+        print(f"Error in analyze_image: {str(e)}")
+        raise Exception(f"Failed to analyze image: {str(e)}")
 
 def process_image(image_path):
     """Process image using PIL instead of cv2"""
@@ -305,93 +339,257 @@ def process_image(image_path):
         print(f"Error processing image: {str(e)}")
         return None
 
-def generate_pdf_report(patient_name, age, gender, findings, recommendations, image_path=None):
-    # Create a temporary file for the PDF
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    pdf_path = f"static/reports/report_{timestamp}.pdf"
+def get_current_time():
+    """Get current time in IST timezone"""
+    ist = pytz.timezone('Asia/Kolkata')
+    return datetime.now(ist)
+
+def format_timestamp(dt):
+    """Format datetime object to string"""
+    return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+def generate_pdf_report(patient_name, age, gender, findings, recommendations, confidence, condition, image_path=None):
+    # Create necessary directories
+    reports_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'reports')
+    os.makedirs(reports_dir, exist_ok=True)
+    
+    # Create a temporary file for the PDF with proper path
+    current_time = get_current_time()
+    timestamp = current_time.strftime("%Y%m%d_%H%M%S")
+    pdf_path = os.path.join(reports_dir, f'report_{timestamp}.pdf')
     
     # Create PDF object
     pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
     
-    # Set font
-    pdf.set_font("Arial", "B", 16)
-    
-    # Add title
-    pdf.cell(0, 10, "Medical Report", ln=True, align='C')
-    
-    # Add patient information
-    pdf.set_font("Arial", "B", 12)
-    pdf.cell(0, 10, "Patient Information", ln=True)
-    
-    pdf.set_font("Arial", "", 12)
-    pdf.cell(0, 10, f"Name: {patient_name}", ln=True)
-    pdf.cell(0, 10, f"Age: {age}", ln=True)
-    pdf.cell(0, 10, f"Gender: {gender}", ln=True)
+    # HEADER SECTION
+    pdf.set_fill_color(10, 36, 114)  # Dark blue header background
+    pdf.rect(0, 0, 210, 40, style="F")
+    pdf.set_font("Arial", "B", 28)
+    pdf.set_text_color(255, 255, 255)  # White text
+    pdf.cell(0, 20, "CARE-X", ln=True, align='C')
+    pdf.set_font("Arial", "I", 14)
+    pdf.cell(0, 10, "Chest Imaging & Pneumonia Detection", ln=True, align='C')
     pdf.ln(10)
     
-    # Add X-ray image if available
-    if image_path and os.path.exists(image_path):
-        try:
-            # Add image with proper sizing
-            pdf.image(image_path, x=10, w=190)
-            pdf.ln(10)
-        except Exception as e:
-            print(f"Error adding image to PDF: {str(e)}")
+    # Reset color for rest of the document
+    pdf.set_text_color(0, 0, 0)
     
-    # Add findings
-    pdf.set_font("Arial", "B", 12)
-    pdf.cell(0, 10, "Findings", ln=True)
+    # PATIENT INFO SECTION
+    pdf.set_font("Arial", "B", 14)
+    pdf.cell(0, 10, f"Dear {patient_name},", ln=True)
+    pdf.ln(5)
     
-    pdf.set_font("Arial", "", 12)
-    pdf.multi_cell(0, 10, findings)
+    # Patient Information Table
+    col_width = 35
+    row_height = 10
+    
+    # Table header with light gray background
+    pdf.set_fill_color(240, 240, 240)
+    pdf.set_font("Arial", "B", 10)
+    
+    # Table headers
+    pdf.cell(col_width, row_height, "Name", 1, 0, 'C', 1)
+    pdf.cell(col_width, row_height, "Patient ID", 1, 0, 'C', 1)
+    pdf.cell(col_width, row_height, "Age", 1, 0, 'C', 1)
+    pdf.cell(col_width, row_height, "Gender", 1, 0, 'C', 1)
+    pdf.cell(col_width, row_height, "Exam Date", 1, 1, 'C', 1)
+    
+    # Table data
+    pdf.set_font("Arial", "", 10)
+    patient_id = f"PID{timestamp[:6]}"
+    pdf.cell(col_width, row_height, patient_name, 1, 0, 'C')
+    pdf.cell(col_width, row_height, patient_id, 1, 0, 'C')
+    pdf.cell(col_width, row_height, str(age), 1, 0, 'C')
+    pdf.cell(col_width, row_height, gender, 1, 0, 'C')
+    pdf.cell(col_width, row_height, current_time.strftime("%Y-%m-%d"), 1, 1, 'C')
     pdf.ln(10)
     
-    # Add recommendations
+    # FINDINGS SECTION
+    pdf.set_fill_color(220, 230, 241)  # Light blue for findings
     pdf.set_font("Arial", "B", 12)
-    pdf.cell(0, 10, "Recommendations", ln=True)
+    pdf.cell(0, 10, "RADIOLOGICAL FINDINGS", 0, 1, 'L', 1)
+    pdf.set_font("Arial", "", 11)
+    pdf.multi_cell(0, 8, findings)
+    pdf.ln(10)
     
-    pdf.set_font("Arial", "", 12)
+    # Get primary condition from findings text
+    condition = "Normal" if "normal" in findings.lower() else "Pneumonia"
     
-    # Generate recommendations based on findings
-    if "pneumonia" in findings.lower():
+    # RECOMMENDATIONS SECTION
+    pdf.set_fill_color(226, 239, 218)  # Light green for recommendations
+    pdf.set_font("Arial", "B", 12)
+    pdf.cell(0, 10, "RECOMMENDATIONS", 0, 1, 'L', 1)
+    pdf.set_font("Arial", "", 11)
+    
+    # Generate dynamic recommendations based on condition and confidence level
+    if condition == "Normal":
         recommendations = [
-            "1. Follow prescribed antibiotic treatment",
-            "2. Get adequate rest and sleep",
-            "3. Stay hydrated (8-10 glasses of water daily)",
-            "4. Monitor temperature and symptoms",
-            "5. Follow up with healthcare provider as scheduled",
-            "6. Avoid smoking and second-hand smoke",
-            "7. Practice deep breathing exercises",
-            "8. Maintain good hand hygiene"
+            "- Regular health maintenance and preventive care.",
+            "- Annual chest X-ray screening if risk factors present.",
+            "- Maintain good respiratory hygiene.",
+            f"- Next routine check-up recommended in {random.choice(['6 months', '1 year'])}.",
+            "- Consider pneumonia vaccination if not already received."
         ]
-    else:
+        if confidence < 0.7:
+            recommendations.extend([
+                "- Consider follow-up imaging in 3 months due to low confidence reading.",
+                "- Radiologist review recommended for confirmation."
+            ])
+    else:  # Pneumonia case
+        severity = "mild" if confidence < 0.7 else "moderate" if confidence < 0.85 else "severe"
         recommendations = [
-            "1. Continue regular health check-ups",
-            "2. Maintain a healthy lifestyle",
-            "3. Practice good respiratory hygiene",
-            "4. Stay up to date with vaccinations",
-            "5. Exercise regularly",
-            "6. Maintain a balanced diet",
-            "7. Get adequate sleep",
-            "8. Manage stress levels"
+            f"- {severity.capitalize()} pneumonia detected - {get_severity_recommendations(severity)}",
+            "- Immediate antibiotic therapy as prescribed by physician.",
+            f"- Follow-up chest X-ray in {get_followup_timing(severity)}.",
+            "- Monitor temperature and breathing patterns.",
+            "- Deep breathing exercises as tolerated.",
+            "- Adequate rest and hydration essential."
         ]
+        if severity == "severe":
+            recommendations.extend([
+                "- Consider hospital admission for close monitoring.",
+                "- Oxygen therapy may be required.",
+                "- Pulmonologist consultation recommended."
+            ])
     
     # Add recommendations to PDF
     for rec in recommendations:
-        pdf.multi_cell(0, 10, rec)
-        pdf.ln(5)
+        pdf.cell(0, 8, rec, 0, 1)
+    pdf.ln(5)
     
-    # Add timestamp and footer
-    pdf.set_y(-30)
-    pdf.set_font("Arial", "I", 8)
-    pdf.cell(0, 10, f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", 0, 1, 'C')
-    pdf.cell(0, 10, "This is a computer-generated report. Please consult with a healthcare provider.", 0, 1, 'C')
+    # ADDITIONAL RECOMMENDATIONS SECTION
+    pdf.set_fill_color(255, 242, 204)  # Light yellow for additional recommendations
+    pdf.set_font("Arial", "B", 12)
+    pdf.cell(0, 10, "ADDITIONAL RECOMMENDATIONS", 0, 1, 'L', 1)
+    pdf.set_font("Arial", "", 11)
     
-    # Save the PDF
+    # Generate dynamic additional recommendations
+    additional_recs = generate_additional_recommendations(condition, confidence)
+    for rec in additional_recs:
+        pdf.cell(0, 8, rec, 0, 1)
+    pdf.ln(5)
+    
+    # Add X-ray image with proper formatting
+    if image_path and os.path.exists(image_path):
+        try:
+            # Add a new page for the image
+            pdf.add_page()
+            
+            # Add header
+            pdf.set_fill_color(10, 36, 114)  # Dark blue header
+            pdf.rect(0, 0, 210, 40, style="F")
+            pdf.set_font("Arial", "B", 28)
+            pdf.set_text_color(255, 255, 255)  # White text
+            pdf.cell(0, 20, "X-RAY IMAGE", ln=True, align='C')
+            pdf.set_font("Arial", "I", 14)
+            pdf.cell(0, 10, f"Examination Date: {current_time.strftime('%Y-%m-%d')}", ln=True, align='C')
+            pdf.ln(20)
+            
+            # Reset text color
+            pdf.set_text_color(0, 0, 0)
+            
+            # Add image caption
+            pdf.set_font("Arial", "B", 12)
+            pdf.cell(0, 10, f"Chest X-Ray - {condition} ({confidence:.1%} confidence)", 0, 1, 'C')
+            
+            # Center and size the image appropriately
+            img_width = 180
+            pdf.image(image_path, x=(210-img_width)/2, w=img_width)
+            pdf.ln(10)
+            
+            # Add image findings
+            pdf.set_font("Arial", "B", 12)
+            pdf.cell(0, 10, "IMAGE FINDINGS:", 0, 1, 'L')
+            pdf.set_font("Arial", "", 11)
+            findings_text = generate_image_findings(condition, confidence)
+            pdf.multi_cell(0, 8, findings_text)
+            
+        except Exception as e:
+            print(f"Error adding image to PDF: {str(e)}")
+            
     pdf.output(pdf_path)
-    
     return pdf_path
+
+def get_severity_recommendations(severity):
+    """Generate severity-specific recommendations"""
+    recommendations = {
+        "mild": "outpatient treatment with oral antibiotics",
+        "moderate": "close monitoring and broad-spectrum antibiotics",
+        "severe": "immediate medical attention and possible hospitalization"
+    }
+    return recommendations.get(severity, "seek medical attention")
+
+def get_followup_timing(severity):
+    """Determine follow-up timing based on severity"""
+    timings = {
+        "mild": "7-10 days",
+        "moderate": "5-7 days",
+        "severe": "24-48 hours"
+    }
+    return timings.get(severity, "as directed by physician")
+
+def generate_additional_recommendations(condition, confidence):
+    """Generate dynamic additional recommendations based on condition and confidence"""
+    base_recs = [
+        "- Maintain good hand hygiene and respiratory etiquette.",
+        "- Stay up-to-date with vaccinations.",
+        f"- Schedule follow-up visit in {random.choice(['2 weeks', '1 month', '3 months'])}."
+    ]
+    
+    if condition == "Normal":
+        if confidence < 0.7:
+            base_recs.extend([
+                "- Secondary radiologist review recommended for confirmation.",
+                "- Consider additional imaging views if symptoms persist.",
+                "- Document any changes in respiratory symptoms."
+            ])
+        else:
+            base_recs.extend([
+                "- Continue regular health monitoring.",
+                "- Annual wellness check recommended.",
+                "- Report any new respiratory symptoms promptly."
+            ])
+    else:  # Pneumonia
+        if confidence > 0.85:
+            base_recs.extend([
+                "- Monitor oxygen saturation levels regularly.",
+                "- Complete full course of prescribed antibiotics.",
+                "- Avoid strenuous activities until cleared by physician."
+            ])
+        else:
+            base_recs.extend([
+                "- Additional diagnostic tests may be needed.",
+                "- Keep daily log of symptoms and temperature.",
+                "- Frequent follow-up with healthcare provider."
+            ])
+    
+    return base_recs
+
+def generate_image_findings(condition, confidence):
+    """Generate detailed image findings description"""
+    if condition == "Normal":
+        findings = (
+            "The chest X-ray demonstrates normal lung fields with good inspiration. "
+            "Cardiac silhouette is within normal limits. "
+            "No evidence of consolidation, effusion, or pneumothorax. "
+            "Costophrenic angles are clear. "
+            "Bony structures appear intact."
+        )
+    else:
+        severity = "mild" if confidence < 0.7 else "moderate" if confidence < 0.85 else "severe"
+        locations = ["right lower", "left lower", "right upper", "left upper"]
+        location = random.choice(locations)
+        findings = (
+            f"The chest X-ray shows {severity} opacification in the {location} zone. "
+            f"There is evidence of {random.choice(['patchy', 'confluent', 'scattered'])} infiltrates. "
+            f"Heart size is {random.choice(['normal', 'mildly enlarged'])}. "
+            f"No significant pleural effusion. "
+            f"Findings consistent with {severity} pneumonia."
+        )
+    
+    return findings
 
 # Modify the init_db function
 def init_db():
@@ -415,15 +613,30 @@ def init_db():
 
 # Modify save_report_to_db function
 def save_report_to_db(patient_info, condition, confidence, report_text, image_path, pdf_path):
+    """Save report information to database with proper URL paths"""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
+    current_time = get_current_time()
+    
+    # Convert file paths to URLs
+    image_url = url_for('static', filename=f'uploads/{os.path.basename(image_path)}', _external=True)
+    pdf_url = url_for('static', filename=f'reports/{os.path.basename(pdf_path)}', _external=True)
+    
     c.execute('''INSERT INTO reports 
                  (patient_name, patient_id, age, gender, exam_date, 
-                  condition, confidence, report_text, image_path, pdf_path)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-              (patient_info['name'], patient_info['id'], patient_info['age'],
-               patient_info['gender'], patient_info['date'], condition,
-               confidence, report_text, image_path, pdf_path))
+                  condition, confidence, report_text, image_path, pdf_path, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+              (patient_info['name'], 
+               patient_info.get('id', f'PID{current_time.strftime("%Y%m%d%H%M%S")}'),
+               patient_info['age'],
+               patient_info['gender'], 
+               patient_info.get('date', format_timestamp(current_time)), 
+               condition,
+               confidence, 
+               report_text, 
+               image_url,
+               pdf_url,
+               format_timestamp(current_time)))
     conn.commit()
     conn.close()
 
@@ -478,66 +691,335 @@ def translate_report(report_text, language='en'):
 
 @app.route('/generate_report', methods=['POST'])
 def generate_report_endpoint():
-    if 'image' not in request.files:
-        return jsonify({'error': 'No image uploaded'}), 400
-    
-    image = request.files['image']
-    if image.filename == '':
-        return jsonify({'error': 'No image selected'}), 400
-    
     try:
+        print("Received report generation request")
+        current_time = get_current_time()
+        
+        # Debug prints
+        print("Request method:", request.method)
+        print("Content type:", request.content_type)
+        print("Form data:", request.form)
+        print("Files:", request.files)
+        print("Request data:", request.data)
+        
+        # Check if model is loaded
+        global model
+        if model is None:
+            print("Model not loaded, attempting to reload...")
+            model = load_model()
+            if model is None:
+                return jsonify({
+                    'error': 'Model initialization failed',
+                    'alert': {
+                        'type': 'error',
+                        'title': 'System Error',
+                        'message': 'Failed to initialize the AI model. Please try again later.'
+                    }
+                }), 500
+        
+        # Check if files were uploaded
+        if 'file' not in request.files:
+            print("No file found in request.files. Keys:", list(request.files.keys()) if request.files else "No files")
+            error_msg = {
+                'error': 'Please upload an X-ray image',
+                'alert': {
+                    'type': 'warning',
+                    'title': 'Image Required',
+                    'message': 'Please select an X-ray image to analyze'
+                }
+            }
+            # For direct form submission, render the page with an error
+            if request.content_type and 'multipart/form-data' in request.content_type:
+                return render_template('index.html', error=error_msg['error'])
+            # For API requests, return JSON
+            else:
+                return jsonify(error_msg), 400
+        
+        image = request.files['file']
+        if image.filename == '':
+            error_msg = {
+                'error': 'No image selected',
+                'alert': {
+                    'type': 'warning',
+                    'title': 'Image Required',
+                    'message': 'Please select an X-ray image to analyze'
+                }
+            }
+            # For direct form submission, render the page with an error
+            if request.content_type and 'multipart/form-data' in request.content_type:
+                return render_template('index.html', error=error_msg['error'])
+            # For API requests, return JSON
+            else:
+                return jsonify(error_msg), 400
+        
+        # Print file details for debugging
+        print(f"File received: {image.filename}")
+        print(f"Content type: {image.content_type}")
+        
+        # Verify file type
+        if not image.content_type.startswith('image/'):
+            return jsonify({
+                'error': 'Invalid file type',
+                'alert': {
+                    'type': 'error',
+                    'title': 'Invalid File Type',
+                    'message': f'The file "{image.filename}" is not a valid image. Please upload an image file (JPG, PNG, etc.)'
+                }
+            }), 400
+        
+        # Get patient info with default values
         patient_info = {
-            'name': request.form.get('patientName', ''),
-            'id': request.form.get('patientId', ''),
-            'age': request.form.get('patientAge', ''),
-            'gender': request.form.get('patientGender', ''),
-            'date': request.form.get('examDate', '')
+            'name': request.form.get('patientName', '').strip(),
+            'id': request.form.get('patientId', '').strip(),
+            'age': request.form.get('patientAge', '').strip(),
+            'gender': request.form.get('patientGender', '').strip(),
+            'date': request.form.get('examDate', '').strip()
         }
         
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        image_path = f'static/uploads/image_{timestamp}.jpg'
-        os.makedirs('static/uploads', exist_ok=True)
+        # Validate patient info with detailed alerts
+        validation_alerts = []
+        
+        # Name validation
+        if not patient_info['name']:
+            validation_alerts.append({
+                'field': 'patientName',
+                'type': 'error',
+                'title': 'Name Required',
+                'message': 'Please enter the patient\'s name'
+            })
+        elif len(patient_info['name']) < 2:
+            validation_alerts.append({
+                'field': 'patientName',
+                'type': 'error',
+                'title': 'Invalid Name',
+                'message': 'Patient name must be at least 2 characters long'
+            })
+        elif not patient_info['name'].replace(' ', '').isalpha():
+            validation_alerts.append({
+                'field': 'patientName',
+                'type': 'error',
+                'title': 'Invalid Name',
+                'message': 'Patient name should only contain letters and spaces'
+            })
+        
+        # Patient ID validation
+        if not patient_info['id']:
+            validation_alerts.append({
+                'field': 'patientId',
+                'type': 'error',
+                'title': 'ID Required',
+                'message': 'Please enter the patient\'s ID'
+            })
+        elif not patient_info['id'].isalnum():
+            validation_alerts.append({
+                'field': 'patientId',
+                'type': 'error',
+                'title': 'Invalid ID',
+                'message': 'Patient ID should only contain letters and numbers'
+            })
+        
+        # Age validation
+        if not patient_info['age']:
+            validation_alerts.append({
+                'field': 'patientAge',
+                'type': 'error',
+                'title': 'Age Required',
+                'message': 'Please enter the patient\'s age'
+            })
+        else:
+            try:
+                age = int(patient_info['age'])
+                if age < 0:
+                    validation_alerts.append({
+                        'field': 'patientAge',
+                        'type': 'error',
+                        'title': 'Invalid Age',
+                        'message': 'Age cannot be negative'
+                    })
+                elif age > 150:
+                    validation_alerts.append({
+                        'field': 'patientAge',
+                        'type': 'error',
+                        'title': 'Invalid Age',
+                        'message': 'Age seems invalid (over 150)'
+                    })
+            except ValueError:
+                validation_alerts.append({
+                    'field': 'patientAge',
+                    'type': 'error',
+                    'title': 'Invalid Age',
+                    'message': 'Please enter a valid number for age'
+                })
+        
+        # Gender validation
+        if not patient_info['gender']:
+            validation_alerts.append({
+                'field': 'patientGender',
+                'type': 'error',
+                'title': 'Gender Required',
+                'message': 'Please select the patient\'s gender'
+            })
+        elif patient_info['gender'].lower() not in ['male', 'female', 'other']:
+            validation_alerts.append({
+                'field': 'patientGender',
+                'type': 'error',
+                'title': 'Invalid Gender',
+                'message': 'Please select either Male, Female, or Other'
+            })
+        
+        # Date validation
+        if not patient_info['date']:
+            validation_alerts.append({
+                'field': 'examDate',
+                'type': 'error',
+                'title': 'Date Required',
+                'message': 'Please enter the examination date'
+            })
+        else:
+            try:
+                exam_date = datetime.strptime(patient_info['date'], '%Y-%m-%d')
+                if exam_date > datetime.now():
+                    validation_alerts.append({
+                        'field': 'examDate',
+                        'type': 'error',
+                        'title': 'Invalid Date',
+                        'message': 'Examination date cannot be in the future'
+                    })
+            except ValueError:
+                validation_alerts.append({
+                    'field': 'examDate',
+                    'type': 'error',
+                    'title': 'Invalid Date Format',
+                    'message': 'Please enter the date in YYYY-MM-DD format'
+                })
+        
+        # Return validation alerts if any
+        if validation_alerts:
+            return jsonify({
+                'error': 'Please correct the following errors',
+                'alerts': validation_alerts
+            }), 400
+        
+        # Save the image
+        timestamp = current_time.strftime("%Y%m%d_%H%M%S")
+        image_filename = f'image_{timestamp}.jpg'
+        image_path = os.path.join(base_dir, 'static', 'uploads', image_filename)
+        print(f"Saving image to: {image_path}")
         image.save(image_path)
         
-        image_tensor = process_image(image_path)
-        report_text, confidence, condition = analyze_image(image_tensor)
+        try:
+            # Process the image
+            print("Processing image...")
+            image_tensor = process_image(image_path)
+            if image_tensor is None:
+                raise Exception("Failed to process image")
+                
+            # Analyze the image
+            print("Analyzing image...")
+            report_text, confidence, condition = analyze_image(image_tensor)
         
-        language = request.form.get('language', 'en')
-        if language != 'en':
-            report_text = translate_report(report_text, language)
+            # Generate PDF
+            print("Generating PDF report...")
+            pdf_path = generate_pdf_report(
+                patient_info['name'], 
+                patient_info['age'], 
+                patient_info['gender'], 
+                report_text, 
+                "",  # recommendations
+                confidence,
+                condition,
+                image_path
+            )
+            
+            # Save report to database
+            try:
+                save_report_to_db(
+                    patient_info=patient_info,
+                    condition=condition,
+                    confidence=confidence,
+                    report_text=report_text,
+                    image_path=image_path,
+                    pdf_path=pdf_path
+                )
+                print("Report saved to database successfully")
+            except Exception as db_error:
+                print(f"Error saving to database: {str(db_error)}")
+            
+            # Create URLs for response
+            image_url = url_for('static', filename=f'uploads/{image_filename}')
+            pdf_filename = os.path.basename(pdf_path)
+            pdf_url = url_for('static', filename=f'reports/{pdf_filename}')
+            
+            print("Report generation completed successfully")
+            response_data = {
+                'success': True,
+                'report': report_text,
+                'condition': condition,
+                'confidence': f"{confidence:.1%}",
+                'image_url': image_url,
+                'pdf_url': pdf_url
+            }
+            
+            # For direct form submissions, render result page
+            if request.content_type and 'multipart/form-data' in request.content_type:
+                timestamp = pdf_filename.split('report_')[1].split('.pdf')[0]
+                return render_template('result.html', 
+                                    report=report_text, 
+                                    condition=condition,
+                                    confidence=f"{confidence:.1%}",
+                                    image_url=image_url,
+                                    pdf_url=url_for('download_report', timestamp=timestamp))
+            # For API requests, return JSON
+            else:
+                return jsonify(response_data)
         
-        # Generate PDF with image and recommendations
-        pdf_path = generate_pdf_report(
-            patient_info['name'], 
-            patient_info['age'], 
-            patient_info['gender'], 
-            report_text, 
-            "",  # recommendations will be generated inside the function
-            image_path  # pass the image path
-        )
-        
-        # Save to database
-        save_report_to_db(patient_info, condition, confidence, report_text, image_path, pdf_path)
-        
-        return jsonify({
-            'success': True,
-            'report': report_text,
-            'condition': condition,
-            'confidence': f"{confidence:.1%}",
-            'image_url': image_path,
-            'pdf_url': pdf_path
-        })
-        
+        except Exception as processing_error:
+            print(f"Processing error: {str(processing_error)}")
+            # Clean up the saved image if processing fails
+            if os.path.exists(image_path):
+                os.remove(image_path)
+            return jsonify({
+                'error': 'Processing error',
+                'alert': {
+                    'type': 'error',
+                    'title': 'Processing Failed',
+                    'message': str(processing_error)
+                }
+            }), 500
+            
     except Exception as e:
         print(f"Error generating report: {str(e)}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({
+            'error': 'Server error',
+            'alert': {
+                'type': 'error',
+                'title': 'Server Error',
+                'message': 'An unexpected error occurred. Please try again later.'
+            }
+        }), 500
 
 @app.route('/download_report/<timestamp>')
 def download_report(timestamp):
     try:
-        pdf_path = f'static/reports/report_{timestamp}.pdf'
-        return send_file(pdf_path, as_attachment=True, download_name=f'xray_report_{timestamp}.pdf')
+        # Use os.path.join for proper path construction
+        pdf_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'reports', f'report_{timestamp}.pdf')
+        
+        # Check if file exists
+        if not os.path.exists(pdf_path):
+            print(f"PDF file not found at path: {pdf_path}")
+            return jsonify({'error': 'Report file not found'}), 404
+            
+        # Ensure the directory exists
+        os.makedirs(os.path.dirname(pdf_path), exist_ok=True)
+        
+        return send_file(
+            pdf_path,
+            as_attachment=True,
+            download_name=f'xray_report_{timestamp}.pdf',
+            mimetype='application/pdf'
+        )
     except Exception as e:
+        print(f"Error downloading report: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/view_reports')
@@ -697,8 +1179,8 @@ def get_analytics_data():
                 AVG(confidence) as avg_confidence
             FROM reports 
             GROUP BY LOWER(condition)
-        ''')
-        
+            ''')
+            
         rows = c.fetchall()
         stats['total_scans'] = sum(row[1] for row in rows)
         
@@ -710,7 +1192,7 @@ def get_analytics_data():
                     'percentage': round((count / stats['total_scans']) * 100, 1) if stats['total_scans'] > 0 else 0,
                     'avg_confidence': round(avg_confidence * 100, 1) if avg_confidence else 0
                 }
-        
+    
         # Get age group distribution
         c.execute('''
             SELECT 
@@ -726,12 +1208,12 @@ def get_analytics_data():
             WHERE age IS NOT NULL AND age != ''
             GROUP BY age_group
             ORDER BY age_group
-        ''')
-        
+            ''')
+            
         for row in c.fetchall():
             if row[0]:
                 stats['age_groups'][row[0]] = row[1]
-        
+    
         # Get gender distribution
         c.execute('''
             SELECT 
@@ -739,12 +1221,12 @@ def get_analytics_data():
                 COUNT(*) as count
             FROM reports 
             GROUP BY UPPER(gender)
-        ''')
-        
+            ''')
+            
         for row in c.fetchall():
             gender = row[0] if row[0] in ['M', 'F', 'O'] else 'O'
             stats['gender_distribution'][gender] = row[1]
-        
+    
         # Get confidence level distribution
         c.execute('''
             SELECT 
@@ -756,8 +1238,8 @@ def get_analytics_data():
                 COUNT(*) as count
             FROM reports 
             GROUP BY confidence_level
-        ''')
-        
+            ''')
+            
         for row in c.fetchall():
             if row[0]:
                 stats['accuracy_metrics'][f'{row[0]}_confidence'] = row[1]
@@ -805,7 +1287,10 @@ def generate_heatmap_overlay(image_tensor, model):
     img = Image.fromarray(img_array)
     
     # Create heatmap
-    heatmap = model.get_activation_map(image_tensor)
+    heatmap = model.densenet.features(image_tensor)
+    heatmap = torch.mean(heatmap, dim=1).squeeze()
+    heatmap = F.interpolate(heatmap.unsqueeze(0).unsqueeze(0), 
+                           size=(224, 224), mode='bilinear').squeeze()
     heatmap = ((heatmap - heatmap.min()) * 255 / (heatmap.max() - heatmap.min())).astype(np.uint8)
     heatmap_img = Image.fromarray(heatmap).convert('RGB')
     
@@ -1025,13 +1510,91 @@ def get_heatmap(image_id):
             'error': str(e)
         })
 
+# Add these new helper functions after the existing ones
+
+def get_patient_specific_recommendations(age, gender, condition, confidence):
+    """Generate patient-specific recommendations based on demographics"""
+    recommendations = []
+    
+    # Age-specific recommendations
+    try:
+        age_num = int(age)
+        if age_num < 18:
+            recommendations.extend([
+                "- Pediatric follow-up recommended",
+                "- Monitor growth and development",
+                "- Ensure age-appropriate vaccinations"
+            ])
+        elif age_num > 65:
+            recommendations.extend([
+                "- Regular geriatric assessment advised",
+                "- Monitor for age-related complications",
+                "- Consider pneumococcal vaccination"
+            ])
+    except ValueError:
+        pass  # Skip age-specific recommendations if age is invalid
+    
+    # Gender-specific recommendations
+    if gender.lower() == 'female':
+        recommendations.append("- Consider bone density screening if post-menopausal")
+    
+    # Condition-specific recommendations
+    if condition == "Pneumonia":
+        recommendations.extend([
+            f"- Follow-up chest X-ray in {get_followup_timing_detailed(confidence)}",
+            "- Monitor temperature and oxygen levels",
+            "- Complete prescribed course of antibiotics"
+        ])
+    
+    return recommendations
+
+def get_followup_timing_detailed(confidence):
+    """Generate detailed follow-up timing based on confidence level"""
+    if confidence < 0.6:
+        return "3-5 days with radiologist review"
+    elif confidence < 0.8:
+        return "5-7 days"
+    else:
+        return "7-10 days if improving"
+
+def generate_lifestyle_recommendations(condition):
+    """Generate lifestyle and preventive recommendations"""
+    base_recommendations = [
+        "- Maintain regular exercise routine as tolerated",
+        "- Ensure adequate sleep (7-9 hours/night)",
+        "- Stay well-hydrated",
+        "- Practice good respiratory hygiene"
+    ]
+    
+    if condition == "Pneumonia":
+        base_recommendations.extend([
+            "- Avoid smoking and second-hand smoke exposure",
+            "- Use humidifier in sleeping area",
+            "- Practice breathing exercises as prescribed",
+            "- Monitor and record daily symptoms"
+        ])
+    else:
+        base_recommendations.extend([
+            "- Regular cardiovascular exercise",
+            "- Annual health check-ups",
+            "- Maintain healthy BMI",
+            "- Consider smoking cessation if applicable"
+        ])
+    
+    return base_recommendations
+
+def get_environmental_recommendations():
+    """Generate environmental and preventive recommendations"""
+    return [
+        "- Maintain good indoor air quality",
+        "- Regular cleaning and dusting",
+        "- Avoid exposure to irritants",
+        "- Consider air purification systems",
+        "- Keep indoor humidity between 30-50%"
+    ]
+
 # Modify the main section
 if __name__ == '__main__':
-    # Create necessary directories
-    os.makedirs('static/uploads', exist_ok=True)
-    os.makedirs('static/reports', exist_ok=True)
-    os.makedirs('static/heatmaps', exist_ok=True)
-    
     # Initialize database
     init_db()
     

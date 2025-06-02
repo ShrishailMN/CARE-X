@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Report Results</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .preview-image {
+            max-width: 100%;
+            max-height: 400px;
+            margin: 20px 0;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+        }
+        .download-btn {
+            margin-top: 20px;
+        }
+        h1 {
+            font-family: 'Arial', sans-serif;
+            padding: 50px;
+            margin: 0%;
+            background-color: #0A2472;
+            color: white;
+        }
+        footer {
+            background-color: #0A2472;
+            color: white;
+            text-align: center;
+            padding: 20px;
+            width: 100%;
+            margin-top: 50px;
+        }
+        .card {
+            background-color: #F8F9FA;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 4px 8px #0A2472;
+            margin-bottom: 3%;
+        }
+        .btn-primary {
+            background-color: #0A2472;
+            border-color: #0A2472;
+        }
+        .btn-success {
+            border-color: #0A2472;
+            transition: background-color 0.3s, border-color 0.3s, color 0.3s;
+        }
+        .image-container {
+            text-align: center;
+            margin: 20px 0;
+            padding: 20px;
+            background-color: #f8f9fa;
+            border-radius: 8px;
+        }
+        .image-title {
+            margin-bottom: 15px;
+            color: #0A2472;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <h1 class="text-center">Report Results</h1>
+    
+    <div class="container mt-5">
+        <div class="row justify-content-center">
+            <div class="col-md-8">
+                <div class="text-center mb-4">
+                    <a href="/" class="btn btn-primary me-2">Return Home</a>
+                    <a href="/view_reports" class="btn btn-secondary">View Report History</a>
+                </div>
+
+                <div class="card mb-4">
+                    <div class="card-body">
+                        <h4 class="mb-3">Generated Report</h4>
+                        <div class="p-3 bg-light rounded mb-3">{{ report }}</div>
+                        
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <div class="card h-100">
+                                    <div class="card-body">
+                                        <h5 class="card-title">Condition</h5>
+                                        <p class="card-text">{{ condition }}</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="card h-100">
+                                    <div class="card-body">
+                                        <h5 class="card-title">Confidence</h5>
+                                        <p class="card-text">{{ confidence }}</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="image-container">
+                            <h5 class="image-title">X-Ray Image</h5>
+                            {% if image_url %}
+                            <img src="{{ image_url }}" alt="X-ray Image" class="preview-image img-fluid">
+                            {% else %}
+                            <p class="text-muted">Image not available</p>
+                            {% endif %}
+                        </div>
+                        
+                        <div class="d-grid gap-2">
+                            <a href="{{ pdf_url }}" class="btn btn-success download-btn">
+                                Download PDF Report
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <footer>
+        <p>&copy; 2023 CARE-X. All rights reserved.</p>
+    </footer>
+</body>
+</html> 
