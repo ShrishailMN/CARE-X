@@ -757,22 +757,19 @@ def translate_report(report_text, language='en'):
 @app.route('/generate_report', methods=['POST'])
 def generate_report_endpoint():
     try:
-        print("Received report generation request")
+        logger.info("Received report generation request")
         current_time = get_current_time()
         
-        # Set timeout for the request (5 minutes)
-        timeout = 300
-        
         # Debug prints
-        print("Request method:", request.method)
-        print("Content type:", request.content_type)
-        print("Form data:", request.form)
-        print("Files:", request.files)
+        logger.info(f"Request method: {request.method}")
+        logger.info(f"Content type: {request.content_type}")
+        logger.info(f"Form data: {request.form}")
+        logger.info(f"Files: {request.files}")
         
         # Check if model is loaded
         global model
         if model is None:
-            print("Model not loaded, attempting to reload...")
+            logger.info("Model not loaded, attempting to reload...")
             model = load_model()
             if model is None:
                 return jsonify({
@@ -782,7 +779,7 @@ def generate_report_endpoint():
         
         # Check if files were uploaded
         if 'file' not in request.files:
-            print("No file found in request.files")
+            logger.info("No file found in request.files")
             return jsonify({
                 'error': 'Please upload an X-ray image',
                 'message': 'Please select an X-ray image to analyze'
@@ -796,8 +793,8 @@ def generate_report_endpoint():
             }), 400
         
         # Print file details for debugging
-        print(f"File received: {image.filename}")
-        print(f"Content type: {image.content_type}")
+        logger.info(f"File received: {image.filename}")
+        logger.info(f"Content type: {image.content_type}")
         
         # Verify file type
         if not image.content_type.startswith('image/'):
@@ -822,27 +819,27 @@ def generate_report_endpoint():
             image_path = os.path.join(UPLOAD_FOLDER, image_filename)
             os.makedirs(os.path.dirname(image_path), exist_ok=True)
             image.save(image_path)
-            print(f"Image saved successfully at: {image_path}")
+            logger.info(f"Image saved successfully at: {image_path}")
         except Exception as save_error:
-            print(f"Error saving image: {str(save_error)}")
+            logger.error(f"Error saving image: {str(save_error)}")
             return jsonify({
                 'error': 'Failed to save image',
                 'message': 'Unable to save the uploaded image. Please try again.'
             }), 500
         
         try:
-            # Process the image with timeout
-            print("Processing image...")
+            # Process the image
+            logger.info("Processing image...")
             image_tensor = process_image(image_path)
             if image_tensor is None:
                 raise Exception("Failed to process image")
             
             # Analyze the image
-            print("Analyzing image...")
+            logger.info("Analyzing image...")
             report_text, confidence, condition = analyze_image(image_tensor)
             
-            # Generate PDF with timeout
-            print("Generating PDF report...")
+            # Generate PDF
+            logger.info("Generating PDF report...")
             pdf_path = generate_pdf_report(
                 patient_info['name'],
                 patient_info['age'],
@@ -864,37 +861,29 @@ def generate_report_endpoint():
                     image_path=image_path,
                     pdf_path=pdf_path
                 )
-                print("Report saved to database successfully")
+                logger.info("Report saved to database successfully")
             except Exception as db_error:
-                print(f"Error saving to database: {str(db_error)}")
+                logger.error(f"Error saving to database: {str(db_error)}")
             
             # Create URLs for response
-            image_url = url_for('static', filename=f'uploads/{image_filename}')
+            image_url = url_for('static', filename=f'uploads/{image_filename}', _external=True)
             pdf_filename = os.path.basename(pdf_path)
-            pdf_url = url_for('static', filename=f'reports/{pdf_filename}')
+            pdf_url = url_for('static', filename=f'reports/{pdf_filename}', _external=True)
             
-            print("Report generation completed successfully")
+            logger.info("Report generation completed successfully")
             
-            # Return appropriate response based on request type
-            if request.content_type and 'multipart/form-data' in request.content_type:
-                return render_template('result.html',
-                                    report=report_text,
-                                    condition=condition,
-                                    confidence=f"{confidence:.1%}",
-                                    image_url=image_url,
-                                    pdf_url=pdf_url)
-            else:
-                return jsonify({
-                    'success': True,
-                    'report': report_text,
-                    'condition': condition,
-                    'confidence': f"{confidence:.1%}",
-                    'image_url': image_url,
-                    'pdf_url': pdf_url
-                })
+            # Always return JSON response
+            return jsonify({
+                'success': True,
+                'report': report_text,
+                'condition': condition,
+                'confidence': f"{confidence:.1%}",
+                'image_url': image_url,
+                'pdf_url': pdf_url
+            })
                 
         except Exception as processing_error:
-            print(f"Processing error: {str(processing_error)}")
+            logger.error(f"Processing error: {str(processing_error)}")
             # Clean up the saved image if processing fails
             if os.path.exists(image_path):
                 os.remove(image_path)
@@ -904,7 +893,7 @@ def generate_report_endpoint():
             }), 500
             
     except Exception as e:
-        print(f"Error generating report: {str(e)}")
+        logger.error(f"Error generating report: {str(e)}")
         return jsonify({
             'error': 'Server error',
             'message': 'An unexpected error occurred. Please try again later.'
