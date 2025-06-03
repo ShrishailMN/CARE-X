@@ -376,31 +376,55 @@
             try {
                 const response = await fetch('/generate_report', {
                     method: 'POST',
-                    body: formData
+                    body: formData,
+                    headers: {
+                        'Accept': 'application/json'
+                    }
                 });
                 
+                let data;
+                const contentType = response.headers.get('content-type');
+                if (contentType && contentType.includes('application/json')) {
+                    data = await response.json();
+                } else {
+                    throw new Error('Server returned non-JSON response');
+                }
+                
                 if (!response.ok) {
-                    const error = await response.json();
-                    throw new Error(error.message || 'Failed to process image');
+                    throw new Error(data.message || 'Failed to process image');
+                }
+                
+                // If we have a direct PDF URL, redirect to it
+                if (data.pdf_url) {
+                    window.location.href = data.pdf_url;
+                    return;
                 }
                 
                 const timestamp = new Date().toISOString().replace(/[-:.]/g, '');
                 
                 // Start polling for status
                 const statusCheck = setInterval(async () => {
-                    const statusResponse = await fetch(`/check_status/${timestamp}`);
-                    const statusData = await statusResponse.json();
-                    
-                    if (statusData.status === 'complete') {
+                    try {
+                        const statusResponse = await fetch(`/check_status/${timestamp}`);
+                        if (!statusResponse.ok) {
+                            throw new Error('Status check failed');
+                        }
+                        
+                        const statusData = await statusResponse.json();
+                        
+                        if (statusData.status === 'complete') {
+                            clearInterval(statusCheck);
+                            window.location.href = statusData.pdf_url;
+                        } else if (statusData.status === 'error') {
+                            throw new Error(statusData.message || 'Processing failed');
+                        }
+                    } catch (error) {
                         clearInterval(statusCheck);
-                        window.location.href = statusData.pdf_url;
-                    } else if (statusData.status === 'error') {
-                        clearInterval(statusCheck);
-                        alert('Error processing image: ' + statusData.message);
+                        alert('Error checking status: ' + error.message);
                         document.getElementById('submitButton').disabled = false;
                         document.getElementById('loadingMessage').style.display = 'none';
                     }
-                }, 2000); // Check every 2 seconds
+                }, 2000);
                 
                 // Set timeout after 5 minutes
                 setTimeout(() => {
@@ -411,7 +435,7 @@
                 }, 300000);
                 
             } catch (error) {
-                alert(error.message);
+                alert('Error: ' + error.message);
                 document.getElementById('submitButton').disabled = false;
                 document.getElementById('loadingMessage').style.display = 'none';
             }
