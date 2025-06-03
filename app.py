@@ -13,12 +13,66 @@ from fpdf import FPDF
 import sqlite3
 import numpy as np
 import json
-import re  # Add this at the top of the file if not already present
+import re
+import logging
+import sys
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    stream=sys.stdout
+)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# Add this line for Render
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
+# Increase maximum content length to 16MB
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
+
+# Configure upload paths for Render
+base_dir = os.path.dirname(os.path.abspath(__file__))
+UPLOAD_FOLDER = os.path.join(base_dir, 'static', 'uploads')
+REPORTS_FOLDER = os.path.join(base_dir, 'static', 'reports')
+HEATMAPS_FOLDER = os.path.join(base_dir, 'static', 'heatmaps')
+
+# Ensure directories exist
+for folder in [UPLOAD_FOLDER, REPORTS_FOLDER, HEATMAPS_FOLDER]:
+    os.makedirs(folder, exist_ok=True)
+    
+# Configure for Render deployment
+if os.environ.get('RENDER'):
+    logger.info("Running on Render, configuring for production")
+    # Use /tmp for file operations on Render
+    UPLOAD_FOLDER = '/tmp/uploads'
+    REPORTS_FOLDER = '/tmp/reports'
+    HEATMAPS_FOLDER = '/tmp/heatmaps'
+    for folder in [UPLOAD_FOLDER, REPORTS_FOLDER, HEATMAPS_FOLDER]:
+        os.makedirs(folder, exist_ok=True)
+    
+# Error handling
+@app.errorhandler(413)
+def too_large(e):
+    return jsonify({
+        "error": "File too large",
+        "message": "The uploaded file exceeds the maximum size of 16MB"
+    }), 413
+
+@app.errorhandler(500)
+def server_error(e):
+    logger.error(f"Server error: {str(e)}")
+    return jsonify({
+        "error": "Server error",
+        "message": "An unexpected error occurred. Please try again later."
+    }), 500
+
+@app.errorhandler(Exception)
+def handle_exception(e):
+    logger.error(f"Unhandled exception: {str(e)}")
+    return jsonify({
+        "error": "Server error",
+        "message": "An unexpected error occurred. Please try again later."
+    }), 500
 
 # Create necessary directories at startup
 base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -51,19 +105,46 @@ def load_model():
     """Initialize and load the model"""
     global model, device
     try:
-        print("Initializing model...")
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        logger.info("Initializing model...")
+        device = torch.device('cpu')  # Force CPU on Render
         model = XrayAnalyzer().to(device)
+        
+        # Set to eval mode and optimize memory
         model.eval()
-        print(f"Model initialized successfully on {device}")
+        torch.set_grad_enabled(False)
+        
+        # Clear CUDA cache if it was used
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            
+        logger.info(f"Model initialized successfully on {device}")
         return model
     except Exception as e:
-        print(f"Error initializing model: {str(e)}")
+        logger.error(f"Error initializing model: {str(e)}")
         return None
 
 # Initialize model globally
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+device = torch.device('cpu')  # Force CPU on Render
 model = load_model()
+
+# Enhanced image preprocessing with memory optimization
+def process_image(image_path):
+    try:
+        # Open and convert image
+        with Image.open(image_path) as img:
+            img = ImageOps.grayscale(img)  # Convert to grayscale
+            img = img.convert('RGB')  # Convert to RGB
+            
+            # Apply transforms
+            tensor = image_transforms(img)
+            
+            # Add batch dimension and move to device
+            tensor = tensor.unsqueeze(0).to(device)
+            
+            return tensor
+    except Exception as e:
+        logger.error(f"Error processing image: {str(e)}")
+        return None
 
 # Enhanced image preprocessing
 image_transforms = transforms.Compose([
@@ -322,22 +403,6 @@ def analyze_image(image_tensor):
     except Exception as e:
         print(f"Error in analyze_image: {str(e)}")
         raise Exception(f"Failed to analyze image: {str(e)}")
-
-def process_image(image_path):
-    """Process image using PIL instead of cv2"""
-    try:
-        # Open and convert image to RGB
-        image = Image.open(image_path).convert('RGB')
-        
-        # Apply transformations
-        image_tensor = image_transforms(image)
-        
-        # Add batch dimension
-        image_tensor = image_tensor.unsqueeze(0)
-        return image_tensor.to(device)
-    except Exception as e:
-        print(f"Error processing image: {str(e)}")
-        return None
 
 def get_current_time():
     """Get current time in IST timezone"""
@@ -754,7 +819,7 @@ def generate_report_endpoint():
         try:
             timestamp = current_time.strftime("%Y%m%d_%H%M%S")
             image_filename = f'image_{timestamp}.jpg'
-            image_path = os.path.join(base_dir, 'static', 'uploads', image_filename)
+            image_path = os.path.join(UPLOAD_FOLDER, image_filename)
             os.makedirs(os.path.dirname(image_path), exist_ok=True)
             image.save(image_path)
             print(f"Image saved successfully at: {image_path}")
@@ -850,7 +915,7 @@ def generate_report_endpoint():
 def check_status(timestamp):
     try:
         # Check if PDF exists
-        pdf_path = os.path.join(base_dir, 'static', 'reports', f'report_{timestamp}.pdf')
+        pdf_path = os.path.join(REPORTS_FOLDER, f'report_{timestamp}.pdf')
         if os.path.exists(pdf_path):
             return jsonify({
                 'status': 'complete',
@@ -864,7 +929,7 @@ def check_status(timestamp):
 def download_report(timestamp):
     try:
         # Use os.path.join for proper path construction
-        pdf_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'reports', f'report_{timestamp}.pdf')
+        pdf_path = os.path.join(REPORTS_FOLDER, f'report_{timestamp}.pdf')
         
         # Check if file exists
         if not os.path.exists(pdf_path):
